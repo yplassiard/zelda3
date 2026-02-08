@@ -120,6 +120,20 @@ static uint32 g_hole_warn_phase_inc_lo;     // 1000Hz (hole below)
 static bool g_hole_warn_active;
 static int16 g_hole_warn_dx, g_hole_warn_dy; // direction of nearest danger hole
 
+// Enemy combat dings
+static uint32 g_sword_range_envelope, g_sword_range_phase;
+static int g_sword_range_timer;
+static uint32 g_sword_range_decay, g_sword_range_phase_inc;
+static bool g_sword_range_active;
+
+static uint32 g_danger_phase;
+static uint32 g_danger_phase_inc;
+static bool g_danger_active;
+
+// Sword range double-beep: second tone (ascending)
+static uint32 g_sword_range_phase_inc2;
+static int g_sword_range_beep_pos;  // sample position within the double-beep pattern
+
 // Base frequencies per category
 static const uint16 kBaseFreq[kSpatialCue_Count] = {
   150,  // Wall
@@ -216,6 +230,20 @@ void SpatialAudio_Init(int sample_rate) {
   g_hole_warn_phase = 0;
   g_hole_warn_active = false;
   g_hole_warn_dx = g_hole_warn_dy = 0;
+
+  // Sword range double-beep: 880Hz then 1100Hz, 40ms each, repeats every 500ms
+  g_sword_range_phase_inc = (uint32)((uint64)880 * 256 * 65536 / sample_rate);
+  g_sword_range_phase_inc2 = (uint32)((uint64)1100 * 256 * 65536 / sample_rate);
+  ds = sample_rate * 40 / 1000;
+  g_sword_range_decay = (uint32)(powf(0.01f, 1.0f / ds) * 65536.0f);
+  g_sword_range_envelope = 0; g_sword_range_timer = 0; g_sword_range_phase = 0;
+  g_sword_range_beep_pos = 0;
+  g_sword_range_active = false;
+
+  // Danger: continuous low square wave buzz at 150Hz
+  g_danger_phase_inc = (uint32)((uint64)150 * 256 * 65536 / sample_rate);
+  g_danger_phase = 0;
+  g_danger_active = false;
 
   // Blocked ding: 110Hz, 200ms decay
   g_blocked_phase_inc = (uint32)((uint64)110 * 256 * 65536 / sample_rate);
@@ -750,6 +778,8 @@ void SpatialAudio_ScanFrame(void) {
   }
 
   // Sprite scan: 16 slots, extended range
+  int nearest_enemy_dist = SCAN_RANGE;
+  int nearest_enemy_dx = 0, nearest_enemy_dy = 0;
   for (int k = 0; k < 16; k++) {
     if (sprite_state[k] == 0) continue;
 
@@ -768,7 +798,24 @@ void SpatialAudio_ScanFrame(void) {
       cues[cat].dy = (int16)dy;
       cues[cat].active = true;
     }
+
+    // Track nearest enemy for combat indicators
+    if (cat == kSpatialCue_Enemy) {
+      int ed = (int)isqrt32(d2);
+      if (ed < nearest_enemy_dist) {
+        nearest_enemy_dist = ed;
+        nearest_enemy_dx = dx;
+        nearest_enemy_dy = dy;
+      }
+    }
   }
+
+  // Combat indicators based on nearest enemy
+  bool has_enemy = cues[kSpatialCue_Enemy].active;
+  // Sword range: within 28px — you can hit them
+  g_sword_range_active = has_enemy && (nearest_enemy_dist <= 28);
+  // Danger: within 16px — they can hit you
+  g_danger_active = has_enemy && (nearest_enemy_dist <= 16);
 
   memcpy(g_cue_snapshot, cues, sizeof(g_cue_snapshot));
 
@@ -965,6 +1012,51 @@ void SpatialAudio_MixAudio(int16 *buf, int samples, int channels) {
       int wR = (16 + cdx) * 8;
       mix_L += scaled * wL >> 8;
       mix_R += scaled * wR >> 8;
+    }
+
+    // Combat indicators
+
+    // Sword range: ascending double-beep (880Hz then 1100Hz)
+    // Pattern: [beep1 40ms] [gap 20ms] [beep2 40ms] [silence until 500ms]
+    if (g_sword_range_active) {
+      if (g_sword_range_timer <= 0) {
+        g_sword_range_timer = g_sample_rate / 2;  // repeat every 500ms
+        g_sword_range_beep_pos = 0;
+      }
+      int beep1_end = g_sample_rate * 40 / 1000;
+      int gap_end = g_sample_rate * 60 / 1000;
+      int beep2_end = g_sample_rate * 100 / 1000;
+      if (g_sword_range_beep_pos < beep1_end) {
+        // First beep: 880Hz
+        int16 raw = g_sine_table[(g_sword_range_phase >> 16) & 0xFF];
+        g_sword_range_phase += g_sword_range_phase_inc;
+        int vol = 65536 - (g_sword_range_beep_pos * 65536 / beep1_end);
+        int32 scaled = (int32)raw * (vol >> 8) >> 8;
+        mix_L += scaled;
+        mix_R += scaled;
+      } else if (g_sword_range_beep_pos >= gap_end && g_sword_range_beep_pos < beep2_end) {
+        // Second beep: 1100Hz (higher = ascending)
+        int pos_in_beep = g_sword_range_beep_pos - gap_end;
+        int beep_len = beep2_end - gap_end;
+        int16 raw = g_sine_table[(g_sword_range_phase >> 16) & 0xFF];
+        g_sword_range_phase += g_sword_range_phase_inc2;
+        int vol = 65536 - (pos_in_beep * 65536 / beep_len);
+        int32 scaled = (int32)raw * (vol >> 8) >> 8;
+        mix_L += scaled;
+        mix_R += scaled;
+      }
+      g_sword_range_beep_pos++;
+    }
+    if (g_sword_range_timer > 0) g_sword_range_timer--;
+
+    // Danger: continuous low square wave buzz (150Hz) — harsh and unmistakable
+    if (g_danger_active) {
+      // Square wave: top half of sine table = positive, bottom = negative
+      int phase_idx = (g_danger_phase >> 16) & 0xFF;
+      int16 raw = (phase_idx < 128) ? 8192 : -8192;
+      g_danger_phase += g_danger_phase_inc;
+      mix_L += raw;
+      mix_R += raw;
     }
 
     // Room change chime
