@@ -129,10 +129,36 @@ static bool g_sword_range_active;
 static uint32 g_danger_phase;
 static uint32 g_danger_phase_inc;
 static bool g_danger_active;
+static bool g_danger_prev;          // previous frame state for edge detection
+static int g_danger_drill_pos;      // sample position within drill sound
+static int g_danger_drill_len;      // total drill length in samples
+static int g_danger_exit_pos;       // sample position within exit chime
+static int g_danger_exit_len;       // total exit chime length in samples
+static uint32 g_danger_exit_inc1;   // E4 phase increment
+static uint32 g_danger_exit_inc2;   // B3 phase increment
 
 // Sword range double-beep: second tone (ascending)
 static uint32 g_sword_range_phase_inc2;
-static int g_sword_range_beep_pos;  // sample position within the double-beep pattern
+static int g_sword_range_beep_pos;
+
+// Alignment sonar ping (variable rate based on precision)
+static uint32 g_align_envelope;
+static int g_align_timer;
+static int g_align_interval;  // samples between pings (varies with precision)
+static uint32 g_align_decay;
+static uint32 g_align_phase;
+static uint32 g_align_phase_inc;
+static int g_align_offset;    // how many px off-axis (0 = perfect)
+
+// Sprite hitbox size tables (duplicated from sprite.c for danger zone calculation)
+static const uint8 kHitboxXSize[32] = {
+  12, 1, 16, 20, 20, 8, 4, 32, 48, 24, 32, 32, 32, 48, 12, 12,
+  60, 124, 12, 32, 4, 12, 48, 32, 40, 8, 24, 24, 5, 80, 4, 8,
+};
+static const uint8 kHitboxYSize[32] = {
+  14, 1, 16, 21, 24, 4, 8, 40, 20, 24, 40, 29, 36, 48, 60, 124,
+  12, 12, 17, 28, 4, 2, 28, 20, 10, 4, 24, 16, 5, 48, 8, 12,
+};
 
 // Base frequencies per category
 static const uint16 kBaseFreq[kSpatialCue_Count] = {
@@ -240,10 +266,25 @@ void SpatialAudio_Init(int sample_rate) {
   g_sword_range_beep_pos = 0;
   g_sword_range_active = false;
 
-  // Danger: continuous low square wave buzz at 150Hz
-  g_danger_phase_inc = (uint32)((uint64)150 * 256 * 65536 / sample_rate);
+  // Danger drill: 300Hz tone amplitude-modulated at 25Hz for drill effect
+  g_danger_phase_inc = (uint32)((uint64)300 * 256 * 65536 / sample_rate);
   g_danger_phase = 0;
   g_danger_active = false;
+  g_danger_prev = false;
+  g_danger_drill_pos = -1;
+  g_danger_drill_len = sample_rate * 300 / 1000;  // 300ms drill
+  // Exit chime: E4 (330Hz) then B3 (247Hz), 40ms each with 40ms gap = 120ms total
+  g_danger_exit_inc1 = (uint32)((uint64)330 * 256 * 65536 / sample_rate);
+  g_danger_exit_inc2 = (uint32)((uint64)247 * 256 * 65536 / sample_rate);
+  g_danger_exit_pos = -1;
+  g_danger_exit_len = sample_rate * 120 / 1000;
+
+  // Alignment sonar: 1500Hz ping, 30ms decay
+  g_align_phase_inc = (uint32)((uint64)1500 * 256 * 65536 / sample_rate);
+  ds = sample_rate * 30 / 1000;
+  g_align_decay = (uint32)(powf(0.01f, 1.0f / ds) * 65536.0f);
+  g_align_envelope = 0; g_align_timer = 0; g_align_phase = 0;
+  g_align_interval = 0; g_align_offset = SCAN_RANGE;
 
   // Blocked ding: 110Hz, 200ms decay
   g_blocked_phase_inc = (uint32)((uint64)110 * 256 * 65536 / sample_rate);
@@ -780,6 +821,7 @@ void SpatialAudio_ScanFrame(void) {
   // Sprite scan: 16 slots, extended range
   int nearest_enemy_dist = SCAN_RANGE;
   int nearest_enemy_dx = 0, nearest_enemy_dy = 0;
+  bool any_in_danger = false;
   for (int k = 0; k < 16; k++) {
     if (sprite_state[k] == 0) continue;
 
@@ -799,7 +841,7 @@ void SpatialAudio_ScanFrame(void) {
       cues[cat].active = true;
     }
 
-    // Track nearest enemy for combat indicators
+    // Track nearest enemy + dynamic danger zone
     if (cat == kSpatialCue_Enemy) {
       int ed = (int)isqrt32(d2);
       if (ed < nearest_enemy_dist) {
@@ -807,6 +849,26 @@ void SpatialAudio_ScanFrame(void) {
         nearest_enemy_dx = dx;
         nearest_enemy_dy = dy;
       }
+
+      // Dynamic danger zone: hitbox size + approach speed * reaction frames
+      int hi = sprite_flags4[k] & 0x1F;
+      int hitbox_r = kHitboxXSize[hi];
+      if (kHitboxYSize[hi] > hitbox_r) hitbox_r = kHitboxYSize[hi];
+
+      // Approach speed: dot product of velocity toward Link
+      int8 vx = (int8)sprite_x_vel[k];
+      int8 vy = (int8)sprite_y_vel[k];
+      int approach = 0;
+      if (ed > 0)
+        approach = (-(int)vx * dx - (int)vy * dy) / ed;  // positive = approaching
+      if (approach < 0) approach = 0;
+
+      // danger_dist = hitbox_radius + approach_speed * 6 frames reaction time
+      int danger_dist = hitbox_r + approach * 6;
+      if (danger_dist < 16) danger_dist = 16;  // minimum 16px
+
+      if (ed <= danger_dist)
+        any_in_danger = true;
     }
   }
 
@@ -814,8 +876,41 @@ void SpatialAudio_ScanFrame(void) {
   bool has_enemy = cues[kSpatialCue_Enemy].active;
   // Sword range: within 28px — you can hit them
   g_sword_range_active = has_enemy && (nearest_enemy_dist <= 28);
-  // Danger: within 16px — they can hit you
-  g_danger_active = has_enemy && (nearest_enemy_dist <= 16);
+  // Danger: dynamic per-sprite based on hitbox + approach speed
+  g_danger_active = any_in_danger;
+  // Detect transitions: entering → drill, leaving → exit chime
+  if (g_danger_active && !g_danger_prev) {
+    g_danger_drill_pos = 0;   // start drill
+    g_danger_exit_pos = -1;   // cancel any exit chime
+  } else if (!g_danger_active && g_danger_prev) {
+    g_danger_exit_pos = 0;    // start exit chime
+    g_danger_drill_pos = -1;  // cancel drill
+  }
+  g_danger_prev = g_danger_active;
+
+  // Alignment sonar: check if nearly lined up on X or Y axis with nearest enemy
+  // Pick whichever axis is closer to aligned
+  if (has_enemy && nearest_enemy_dist > 28) {
+    int abs_dx = nearest_enemy_dx < 0 ? -nearest_enemy_dx : nearest_enemy_dx;
+    int abs_dy = nearest_enemy_dy < 0 ? -nearest_enemy_dy : nearest_enemy_dy;
+    int off = abs_dx < abs_dy ? abs_dx : abs_dy;  // best axis alignment
+    if (off < 16) {
+      g_align_offset = off;
+      // Variable ping rate: closer to aligned = faster pings
+      if (off <= 4)
+        g_align_interval = g_sample_rate / 10;   // every 100ms — locked on
+      else if (off <= 8)
+        g_align_interval = g_sample_rate / 5;    // every 200ms
+      else
+        g_align_interval = g_sample_rate * 2 / 5; // every 400ms — getting close
+    } else {
+      g_align_offset = SCAN_RANGE;
+      g_align_interval = 0;
+    }
+  } else {
+    g_align_offset = SCAN_RANGE;
+    g_align_interval = 0;
+  }
 
   memcpy(g_cue_snapshot, cues, sizeof(g_cue_snapshot));
 
@@ -1049,14 +1144,66 @@ void SpatialAudio_MixAudio(int16 *buf, int samples, int channels) {
     }
     if (g_sword_range_timer > 0) g_sword_range_timer--;
 
-    // Danger: continuous low square wave buzz (150Hz) — harsh and unmistakable
-    if (g_danger_active) {
-      // Square wave: top half of sine table = positive, bottom = negative
-      int phase_idx = (g_danger_phase >> 16) & 0xFF;
-      int16 raw = (phase_idx < 128) ? 8192 : -8192;
-      g_danger_phase += g_danger_phase_inc;
-      mix_L += raw;
-      mix_R += raw;
+    // Danger drill: rapid amplitude-modulated buzz on entering danger zone
+    if (g_danger_drill_pos >= 0 && g_danger_drill_pos < g_danger_drill_len) {
+      // 300Hz tone modulated on/off at 25Hz (toggle every 20ms)
+      int mod_period = g_sample_rate / 25;
+      bool mod_on = ((g_danger_drill_pos / (mod_period / 2)) & 1) == 0;
+      if (mod_on) {
+        int phase_idx = (g_danger_phase >> 16) & 0xFF;
+        int16 raw = (phase_idx < 128) ? 10000 : -10000;  // square wave
+        g_danger_phase += g_danger_phase_inc;
+        // Fade out over duration
+        int vol = (g_danger_drill_len - g_danger_drill_pos) * 256 / g_danger_drill_len;
+        int32 scaled = (int32)raw * vol >> 8;
+        mix_L += scaled;
+        mix_R += scaled;
+      }
+      g_danger_drill_pos++;
+    }
+
+    // Danger exit chime: E4 then B3 (descending) when leaving danger zone
+    if (g_danger_exit_pos >= 0 && g_danger_exit_pos < g_danger_exit_len) {
+      int note_len = g_sample_rate * 40 / 1000;   // 40ms per note
+      int gap_end = note_len + g_sample_rate * 40 / 1000;  // 40ms gap
+      int16 raw = 0;
+      if (g_danger_exit_pos < note_len) {
+        // First note: E4 (330Hz)
+        raw = g_sine_table[(g_danger_phase >> 16) & 0xFF];
+        g_danger_phase += g_danger_exit_inc1;
+        int fade = (note_len - g_danger_exit_pos) * 256 / note_len;
+        raw = (int16)((int32)raw * fade >> 8);
+      } else if (g_danger_exit_pos >= gap_end) {
+        // Second note: B3 (247Hz)
+        raw = g_sine_table[(g_danger_phase >> 16) & 0xFF];
+        g_danger_phase += g_danger_exit_inc2;
+        int pos_in_note = g_danger_exit_pos - gap_end;
+        int fade = (note_len - pos_in_note) * 256 / note_len;
+        if (fade < 0) fade = 0;
+        raw = (int16)((int32)raw * fade >> 8);
+      }
+      if (raw) {
+        mix_L += raw;
+        mix_R += raw;
+      }
+      g_danger_exit_pos++;
+    }
+
+    // Alignment sonar ping — variable rate based on precision
+    if (g_align_interval > 0) {
+      if (g_align_timer <= 0) {
+        g_align_envelope = 65536;
+        g_align_timer = g_align_interval;
+      }
+    }
+    if (g_align_timer > 0) g_align_timer--;
+    g_align_envelope = (uint32)((uint64)g_align_envelope * g_align_decay >> 16);
+    if (g_align_envelope > 100) {
+      int16 raw = g_sine_table[(g_align_phase >> 16) & 0xFF];
+      g_align_phase += g_align_phase_inc;
+      int32 scaled = (int32)raw * (int)(g_align_envelope >> 8) >> 8;
+      mix_L += scaled;
+      mix_R += scaled;
     }
 
     // Room change chime
