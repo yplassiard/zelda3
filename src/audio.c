@@ -7,6 +7,7 @@
 #include "third_party/opus-1.3.1-stripped/opus.h"
 #include "config.h"
 #include "assets.h"
+#include "spatial_audio.h"
 
 // This needs to hold a lot more things than with just PCM
 typedef struct MsuPlayerResumeInfo {
@@ -454,6 +455,7 @@ void ZeldaRenderAudio(int16 *audio_buffer, int samples, int channels) {
   dsp_getSamples(g_zenv.player->dsp, audio_buffer, samples, channels);
   if (g_msu_player.f && channels == 2)
     MsuPlayer_Mix(&g_msu_player, audio_buffer, samples);
+  SpatialAudio_MixAudio(audio_buffer, samples, channels);
   ZeldaApuUnlock();
 }
 

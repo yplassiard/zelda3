@@ -113,6 +113,12 @@ void Accessibility_Init(void) {
 
 void Accessibility_AnnounceDialog(void) {
 #ifdef __APPLE__
+  // Suppress dialog TTS during game over (module 12) and save menu (module 14, submodule 11)
+  // — these screens use dedicated choice tracking instead
+  uint8 mod = main_module_index;
+  if (mod == 12) return;
+  if (mod == 14 && submodule_index == 11) return;
+
   Accessibility_ParseChunks();
   g_chunk_current = 0;
   if (g_chunk_count > 0)

@@ -36,6 +36,8 @@ enum {
   kKeys_VolumeDown,
   kKeys_SpeechRateUp,
   kKeys_SpeechRateDown,
+  kKeys_ToggleSpatialAudio,
+  kKeys_SpeakHealth,
   kKeys_Total,
 };
 

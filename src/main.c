@@ -27,6 +27,7 @@
 #include "util.h"
 #include "audio.h"
 #include "accessibility.h"
+#include "spatial_audio.h"
 
 static bool g_run_without_emu = 0;
 
@@ -334,6 +335,7 @@ int main(int argc, char** argv) {
   }
 
   Accessibility_Init();
+  SpatialAudio_Init(g_config.audio_freq ? g_config.audio_freq : kDefaultFreq);
 
   bool custom_size  = g_config.window_width != 0 && g_config.window_height != 0;
   int window_width  = custom_size ? g_config.window_width  : g_current_window_scale * g_snes_width;
@@ -462,6 +464,7 @@ int main(int argc, char** argv) {
 
     SDL_LockMutex(g_audio_mutex);
     bool is_replay = ZeldaRunFrame(inputs);
+    SpatialAudio_ScanFrame();
     SDL_UnlockMutex(g_audio_mutex);
 
     frameCtr++;
@@ -512,6 +515,7 @@ int main(int argc, char** argv) {
 
   g_renderer_funcs.Destroy();
 
+  SpatialAudio_Shutdown();
   Accessibility_Shutdown();
 
   SDL_DestroyWindow(window);
@@ -652,6 +656,12 @@ static void HandleCommand_Locked(uint32 j, bool pressed) {
     case kKeys_SpeechRateUp:
     case kKeys_SpeechRateDown:
       Accessibility_AdjustSpeechRate(j == kKeys_SpeechRateUp ? 1 : -1);
+      break;
+    case kKeys_ToggleSpatialAudio:
+      SpatialAudio_Toggle();
+      break;
+    case kKeys_SpeakHealth:
+      SpatialAudio_SpeakHealth();
       break;
     default: assert(0);
     }
