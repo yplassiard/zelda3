@@ -12,14 +12,22 @@ ifeq (${OS},Windows_NT)
     SDLFLAGS:=-Wl,-Bstatic $(shell sdl2-config --static-libs)
 else
     SDLFLAGS:=$(shell sdl2-config --libs) -lm
+    UNAME_S:=$(shell uname -s)
+    ifeq ($(UNAME_S),Darwin)
+        OBJC_SRCS:=src/platform/macos/speechsynthesis.m
+        OBJC_OBJS:=$(OBJC_SRCS:%.m=%.o)
+        SDLFLAGS+=-framework AVFoundation -framework Foundation -lobjc
+    endif
 endif
 
 .PHONY: all clean clean_obj clean_gen
 
 all: $(TARGET_EXEC) zelda3_assets.dat
-$(TARGET_EXEC): $(OBJS) $(RES)
+$(TARGET_EXEC): $(OBJS) $(OBJC_OBJS) $(RES)
 	$(CC) $^ -o $@ $(LDFLAGS) $(SDLFLAGS)
 %.o : %.c
+	$(CC) -c $(CFLAGS) $< -o $@
+%.o : %.m
 	$(CC) -c $(CFLAGS) $< -o $@
 
 $(RES): src/platform/win32/zelda3.rc
@@ -32,7 +40,7 @@ zelda3_assets.dat:
 
 clean: clean_obj clean_gen
 clean_obj:
-	@$(RM) $(OBJS) $(TARGET_EXEC)
+	@$(RM) $(OBJS) $(OBJC_OBJS) $(TARGET_EXEC)
 clean_gen:
 	@$(RM) $(RES) zelda3_assets.dat tables/zelda3_assets.dat tables/*.txt tables/*.png tables/sprites/*.png tables/*.yaml
 	@rm -rf tables/__pycache__ tables/dungeon tables/img tables/overworld tables/sound

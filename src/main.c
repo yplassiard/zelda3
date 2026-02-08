@@ -26,6 +26,7 @@
 #include "load_gfx.h"
 #include "util.h"
 #include "audio.h"
+#include "accessibility.h"
 
 static bool g_run_without_emu = 0;
 
@@ -332,6 +333,8 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  Accessibility_Init();
+
   bool custom_size  = g_config.window_width != 0 && g_config.window_height != 0;
   int window_width  = custom_size ? g_config.window_width  : g_current_window_scale * g_snes_width;
   int window_height = custom_size ? g_config.window_height : g_current_window_scale * g_snes_height;
@@ -509,6 +512,8 @@ int main(int argc, char** argv) {
 
   g_renderer_funcs.Destroy();
 
+  Accessibility_Shutdown();
+
   SDL_DestroyWindow(window);
   SDL_Quit();
   //SaveConfigFile();
@@ -644,6 +649,10 @@ static void HandleCommand_Locked(uint32 j, bool pressed) {
     case kKeys_ToggleRenderer: g_ppu_render_flags ^= kPpuRenderFlags_NewRenderer; break;
     case kKeys_VolumeUp:
     case kKeys_VolumeDown: HandleVolumeAdjustment(j == kKeys_VolumeUp ? 1 : -1); break;
+    case kKeys_SpeechRateUp:
+    case kKeys_SpeechRateDown:
+      Accessibility_AdjustSpeechRate(j == kKeys_SpeechRateUp ? 1 : -1);
+      break;
     default: assert(0);
     }
   }

@@ -16,6 +16,7 @@
 #include "attract.h"
 #include "nmi.h"
 #include "assets.h"
+#include "accessibility.h"
 
 static void WorldMap_AddSprite(int spr, uint8 big, uint8 flags, uint8 ch, uint16 x, uint16 y);
 static bool WorldMap_CalculateOamCoordinates(Point16U *pt);
@@ -2307,6 +2308,7 @@ void Text_LoadCharacterBuffer() {  // 8ec4e2
   }
   *dst = 0x7f;
   dialogue_msg_read_pos = 0;
+  Accessibility_AnnounceDialog();
 }
 
 uint8 *Text_WritePlayerName(uint8 *p) {  // 8ec5b3
@@ -2473,6 +2475,7 @@ RESTART:;
     } else {
       if ((filtered_joypad_H | filtered_joypad_L) & 0xc0) {
         text_wait_countdown2 = 28;
+        Accessibility_AnnounceNextChunk();
         goto COMMAND_DONE;
       }
     }
