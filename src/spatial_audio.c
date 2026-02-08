@@ -104,6 +104,10 @@ static bool g_tracking_initialized;
 static uint8 g_prev_name_col;
 static uint8 g_prev_name_row;
 
+// Floor tracking
+static uint8 g_prev_floor;
+static bool g_floor_tracking_init;
+
 // Hole ding envelope (for continuous tone)
 static uint32 g_hole_envelope;
 static int g_hole_timer;
@@ -319,6 +323,8 @@ void SpatialAudio_Init(int sample_rate) {
   g_tracking_initialized = false;
   g_prev_name_col = 0xFF;
   g_prev_name_row = 0xFF;
+  g_prev_floor = 0;
+  g_floor_tracking_init = false;
 }
 
 void SpatialAudio_Shutdown(void) {
@@ -405,10 +411,23 @@ static void AnnounceMenuState(void) {
   uint8 sub = submodule_index;
   uint8 cursor = g_ram[0xc8];
 
-  if (mod != g_prev_module || (mod == 1 && sub != g_prev_submodule)) {
-    g_prev_module = mod;
+  // Detect module or relevant submodule changes
+  bool mod_changed = (mod != g_prev_module);
+  bool sub_changed = (sub != g_prev_submodule);
+
+  if (mod_changed || (mod <= 1 && sub_changed)) {
+    // Handle title/intro sequence (module 0)
+    if (mod == 0 && mod_changed) {
+      SpeechSynthesis_Speak("Nintendo");
+    } else if (mod == 0 && sub >= 5 && g_prev_submodule < 5) {
+      SpeechSynthesis_Speak("The Legend of Zelda");
+    }
+
+    if (mod_changed) {
+      g_prev_module = mod;
+      g_prev_cursor = 0xFF;
+    }
     g_prev_submodule = sub;
-    g_prev_cursor = 0xFF;
 
     if (mod == 1 && sub == 5)
       SpeechSynthesis_Speak("File Select");
@@ -418,8 +437,6 @@ static void AnnounceMenuState(void) {
       SpeechSynthesis_Speak("Erase Player");
     else if (mod == 4)
       SpeechSynthesis_Speak("Register Your Name");
-    else
-      return;
   }
 
   if (mod == 1 && sub == 5 && cursor != g_prev_cursor) {
@@ -572,60 +589,92 @@ static void AnnounceNameRegistration(void) {
   }
 }
 
+// --- Floor change tracking ---
+
+static void AnnounceFloorChange(void) {
+  uint8 mod = main_module_index;
+  // Only track during dungeon gameplay
+  if (mod != 9 && mod != 14) {
+    g_floor_tracking_init = false;
+    return;
+  }
+  if (!player_is_indoors) {
+    g_floor_tracking_init = false;
+    return;
+  }
+
+  uint8 floor = dung_cur_floor;
+  if (!g_floor_tracking_init) {
+    g_prev_floor = floor;
+    g_floor_tracking_init = true;
+    return;
+  }
+
+  if (floor != g_prev_floor) {
+    g_prev_floor = floor;
+    if (floor == 0) {
+      SpeechSynthesis_Speak("Ground Floor");
+    } else if (!sign8(floor)) {
+      Speak("Floor %d", floor);
+    } else {
+      // Basement: 0xFF = B1, 0xFE = B2, etc.
+      Speak("Basement %d", (uint8)(~floor) + 1);
+    }
+  }
+}
+
 // --- Inventory tracking ---
 
-static const char *kGameItemNames[22] = {
-  "Empty",           // 0
-  "Bow",             // 1
+// Direct HUD slot (old-style, kNewStyleInventory=0) to item name.
+// Slot 18 is Shovel/Flute depending on game state.
+static const char *kHudSlotNames[21] = {
+  NULL,              // 0 - no item
+  "Hookshot",        // 1
   "Boomerang",       // 2
-  "Hookshot",        // 3
-  "Bombs",           // 4
-  "Mushroom",        // 5
-  "Fire Rod",        // 6
-  "Ice Rod",         // 7
-  "Bombos",          // 8
-  "Ether",           // 9
-  "Quake",           // 10
-  "Lamp",            // 11
-  "Hammer",          // 12
-  "Shovel",          // 13
-  "Bug Net",         // 14
-  "Book of Mudora",  // 15
-  "Bottle",          // 16
-  "Cane of Somaria", // 17
-  "Cane of Byrna",   // 18
+  "Bug Net",         // 3
+  "Bow",             // 4
+  "Quake",           // 5
+  "Mushroom",        // 6
+  "Fire Rod",        // 7
+  "Book of Mudora",  // 8
+  "Bottle",          // 9
+  "Cane of Somaria", // 10
+  "Ether",           // 11
+  "Bombs",           // 12
+  "Bombos",          // 13
+  "Ice Rod",         // 14
+  "Hammer",          // 15
+  "Lamp",            // 16
+  "Cane of Byrna",   // 17
+  "Shovel",          // 18
   "Magic Cape",      // 19
   "Magic Mirror",    // 20
-  "Bottle",          // 21
 };
 
-static const uint8 kHudSlotToGameItem[25] = {
-  0,
-  3,  2, 14, 1,  10,  5,
-  6, 15, 16, 17,  9,  4,
-  8,  7, 12, 21, 18, 13,
-  19, 20, 11, 11, 11, 11,
-};
+static const char *GetItemName(uint8 slot) {
+  if (slot == 0 || slot > 20) return NULL;
+  if (slot == 18)
+    return (link_item_flute >= 2) ? "Flute" : "Shovel";
+  return kHudSlotNames[slot];
+}
 
 static void AnnounceInventory(void) {
   uint8 mod = main_module_index;
-  // Inventory is active during module 14 with HUD open
   bool menu_open = (mod == 14 && submodule_index == 0);
+  bool gameplay = (mod == 7 || mod == 9);
 
-  if (menu_open && !g_prev_menu_open) {
-    // Menu just opened
+  if (menu_open && !g_prev_menu_open)
     g_prev_hud_item = 0xFF;
-  }
   g_prev_menu_open = menu_open;
 
-  if (!menu_open) return;
+  if (!menu_open && !gameplay) return;
 
   uint8 item = hud_cur_item;
-  if (item != g_prev_hud_item && item < 25) {
+  if (item != g_prev_hud_item && item > 0 && item <= 20) {
     g_prev_hud_item = item;
-    uint8 game_item = kHudSlotToGameItem[item];
-    if (game_item < 22)
-      SpeechSynthesis_Speak(kGameItemNames[game_item]);
+    const char *name = GetItemName(item);
+    if (name)
+      SpeechSynthesis_Speak(name);
   }
 }
 
@@ -751,6 +800,7 @@ void SpatialAudio_ScanFrame(void) {
   AnnounceDialogChoice();
   AnnounceInventory();
   AnnounceDungeon();
+  AnnounceFloorChange();
   AnnounceCollections();
   AnnounceNameRegistration();
 #endif
@@ -764,6 +814,20 @@ void SpatialAudio_ScanFrame(void) {
   uint8 mod = main_module_index;
   if (mod != 7 && mod != 9 && mod != 14) {
     memset(g_cue_snapshot, 0, sizeof(g_cue_snapshot));
+    // Kill all in-progress one-shot sounds (death, menu transitions, etc.)
+    g_sword_range_active = false;
+    g_sword_range_envelope = 0;
+    g_danger_active = false;
+    g_danger_prev = false;
+    g_danger_drill_pos = -1;
+    g_danger_exit_pos = -1;
+    g_align_interval = 0;
+    g_align_envelope = 0;
+    g_hole_warn_active = false;
+    g_hole_warn_envelope = 0;
+    g_blocked_active = false;
+    g_blocked_envelope = 0;
+    g_room_chime_envelope = 0;
     return;
   }
 
