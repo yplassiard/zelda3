@@ -470,6 +470,12 @@ int main(int argc, char** argv) {
       continue;
     }
 
+    // Freeze game while sound legend is open (audio keeps running for demo sounds)
+    if (SpatialAudio_IsLegendActive()) {
+      SDL_Delay(16);
+      continue;
+    }
+
     // Clear gamepad inputs when joypad directional inputs to avoid wonkiness
     int inputs = g_input1_state;
     if (g_input1_state & 0xf0)
