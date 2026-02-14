@@ -8,8 +8,10 @@
 #include <stdarg.h>
 #include <math.h>
 
-#ifdef __APPLE__
+#if defined(__APPLE__)
 #include "platform/macos/speechsynthesis.h"
+#elif defined(_WIN32)
+#include "platform/win32/speechsynthesis.h"
 #endif
 
 typedef struct SpatialCue {
@@ -291,7 +293,7 @@ static uint32 isqrt32(uint32 n) {
   return x;
 }
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
 static void Speak(const char *fmt, ...) {
   char buf[128];
   va_list ap;
@@ -695,7 +697,7 @@ void SpatialAudio_Toggle(void) {
       g_legend_demo_pos = -1;
     }
   }
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
   SpeechSynthesis_Speak(g_enabled ? "Accessibility on" : "Accessibility off");
 #endif
 }
@@ -711,7 +713,7 @@ bool SpatialAudio_IsEnabled(void) {
 
 void SpatialAudio_SpeakHealth(void) {
   if (!g_enabled) return;
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
   uint8 cur = link_health_current;
   uint8 cap = link_health_capacity;
   int hearts = cur / 8;
@@ -726,7 +728,7 @@ void SpatialAudio_SpeakHealth(void) {
 
 void SpatialAudio_SpeakLocation(void) {
   if (!g_enabled) return;
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
   uint8 mod = main_module_index;
   if (mod != 7 && mod != 9 && mod != 14) {
     SpeechSynthesis_Speak("In menu");
@@ -838,7 +840,7 @@ static int ClassifyTile(uint8 tile) {
   return -1;
 }
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
 // --- Menu TTS ---
 
 static void DecodeSramName(int slot, char *out, int outlen) {
@@ -1310,7 +1312,7 @@ void SpatialAudio_ScanFrame(void) {
 
   if (!g_enabled) return;
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
   AnnounceMenuState();
   AnnounceGameOverChoice();
   AnnounceDialogChoice();
@@ -1632,7 +1634,7 @@ void SpatialAudio_ScanFrame(void) {
     }
   }
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
   AnnounceNearbyEntrance();
 #endif
 
@@ -2562,12 +2564,12 @@ void SpatialAudio_ToggleLegend(void) {
     g_legend_demo_pos = -1;
     // Clear spatial cues so they don't play during legend
     memset(g_cue_snapshot, 0, sizeof(g_cue_snapshot));
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
     SpeechSynthesis_Speak("Sound Legend. Use Up and Down arrows to browse.");
 #endif
   } else {
     g_legend_demo_pos = -1;
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
     SpeechSynthesis_Speak("Sound Legend closed");
 #endif
   }
@@ -2578,7 +2580,7 @@ void SpatialAudio_LegendNavigate(int dir) {
   g_legend_index += dir;
   if (g_legend_index < 0) g_legend_index = LEGEND_COUNT - 1;
   if (g_legend_index >= LEGEND_COUNT) g_legend_index = 0;
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
   SpeechSynthesis_Speak(kLegendNames[g_legend_index]);
 #endif
   LegendStartDemo(g_legend_index);

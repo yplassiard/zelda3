@@ -9,6 +9,8 @@ CFLAGS:=${CFLAGS} $(shell sdl2-config --cflags) -DSYSTEM_VOLUME_MIXER_AVAILABLE=
 ifeq (${OS},Windows_NT)
     WINDRES:=windres
     RES:=zelda3.res
+    WIN_SRCS:=src/platform/win32/speechsynthesis.c
+    WIN_OBJS:=$(WIN_SRCS:%.c=%.o)
     SDLFLAGS:=-Wl,-Bstatic $(shell sdl2-config --static-libs)
 else
     SDLFLAGS:=$(shell sdl2-config --libs) -lm
@@ -23,7 +25,7 @@ endif
 .PHONY: all clean clean_obj clean_gen
 
 all: $(TARGET_EXEC) zelda3_assets.dat
-$(TARGET_EXEC): $(OBJS) $(OBJC_OBJS) $(RES)
+$(TARGET_EXEC): $(OBJS) $(OBJC_OBJS) $(WIN_OBJS) $(RES)
 	$(CC) $^ -o $@ $(LDFLAGS) $(SDLFLAGS)
 %.o : %.c
 	$(CC) -c $(CFLAGS) $< -o $@
@@ -40,7 +42,7 @@ zelda3_assets.dat:
 
 clean: clean_obj clean_gen
 clean_obj:
-	@$(RM) $(OBJS) $(OBJC_OBJS) $(TARGET_EXEC)
+	@$(RM) $(OBJS) $(OBJC_OBJS) $(WIN_OBJS) $(TARGET_EXEC)
 clean_gen:
 	@$(RM) $(RES) zelda3_assets.dat tables/zelda3_assets.dat tables/*.txt tables/*.png tables/sprites/*.png tables/*.yaml
 	@rm -rf tables/__pycache__ tables/dungeon tables/img tables/overworld tables/sound

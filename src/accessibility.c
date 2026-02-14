@@ -4,8 +4,10 @@
 #include "variables.h"
 #include <string.h>
 
-#ifdef __APPLE__
+#if defined(__APPLE__)
 #include "platform/macos/speechsynthesis.h"
+#elif defined(_WIN32)
+#include "platform/win32/speechsynthesis.h"
 #endif
 
 // Character lookup table matching kTextAlphabet_US from text_compression.py.
@@ -107,14 +109,14 @@ static void Accessibility_ParseChunks(void) {
 }
 
 void Accessibility_Init(void) {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
   SpeechSynthesis_Init();
 #endif
 }
 
 void Accessibility_AnnounceDialog(void) {
   if (!SpatialAudio_IsEnabled()) return;
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
   // Suppress dialog TTS during game over (module 12) and save menu (module 14, submodule 11)
   // — these screens use dedicated choice tracking instead
   uint8 mod = main_module_index;
@@ -130,7 +132,7 @@ void Accessibility_AnnounceDialog(void) {
 
 void Accessibility_AnnounceNextChunk(void) {
   if (!SpatialAudio_IsEnabled()) return;
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
   g_chunk_current++;
   if (g_chunk_current < g_chunk_count)
     SpeechSynthesis_SpeakQueued(g_chunks[g_chunk_current]);
@@ -139,13 +141,13 @@ void Accessibility_AnnounceNextChunk(void) {
 
 void Accessibility_AdjustSpeechRate(int direction) {
   if (!SpatialAudio_IsEnabled()) return;
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
   SpeechSynthesis_AdjustRate(direction);
 #endif
 }
 
 void Accessibility_Shutdown(void) {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
   SpeechSynthesis_Shutdown();
 #endif
 }
