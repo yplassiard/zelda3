@@ -1,4 +1,5 @@
 #include "accessibility.h"
+#include "spatial_audio.h"
 #include "types.h"
 #include "variables.h"
 #include <string.h>
@@ -112,6 +113,7 @@ void Accessibility_Init(void) {
 }
 
 void Accessibility_AnnounceDialog(void) {
+  if (!SpatialAudio_IsEnabled()) return;
 #ifdef __APPLE__
   // Suppress dialog TTS during game over (module 12) and save menu (module 14, submodule 11)
   // — these screens use dedicated choice tracking instead
@@ -127,6 +129,7 @@ void Accessibility_AnnounceDialog(void) {
 }
 
 void Accessibility_AnnounceNextChunk(void) {
+  if (!SpatialAudio_IsEnabled()) return;
 #ifdef __APPLE__
   g_chunk_current++;
   if (g_chunk_current < g_chunk_count)
@@ -135,6 +138,7 @@ void Accessibility_AnnounceNextChunk(void) {
 }
 
 void Accessibility_AdjustSpeechRate(int direction) {
+  if (!SpatialAudio_IsEnabled()) return;
 #ifdef __APPLE__
   SpeechSynthesis_AdjustRate(direction);
 #endif

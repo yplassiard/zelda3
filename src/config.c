@@ -41,8 +41,8 @@ static const uint16 kDefaultKbdControls[kKeys_Total] = {
   _(SDLK_k), _(SDLK_l), A(SDLK_RETURN), C(SDLK_r), S(SDLK_p), _(SDLK_p), _(SDLK_TAB), _(SDLK_t), N, N, _(SDLK_f), _(SDLK_r),
   // VolumeUp, VolumeDown, SpeechRateUp, SpeechRateDown
   N, N, _(SDLK_EQUALS), _(SDLK_MINUS),
-  // ToggleSpatialAudio, SpeakHealth
-  C(SDLK_SPACE), _(SDLK_h),
+  // ToggleSpatialAudio, SpeakHealth, SpeakLocation, SoundLegend
+  C(SDLK_SPACE), _(SDLK_h), _(SDLK_i), C(SDLK_h),
 };
 #undef _
 #undef A
@@ -66,6 +66,8 @@ static const KeyNameId kKeyNameId[] = {
   S(SpeechRateUp), S(SpeechRateDown),
   S(ToggleSpatialAudio),
   S(SpeakHealth),
+  S(SpeakLocation),
+  S(SoundLegend),
 };
 #undef S
 #undef M

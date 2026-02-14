@@ -282,11 +282,23 @@ void OpenGLRenderer_Create(struct RendererFuncs *funcs, bool use_opengl_es);
 int main(int argc, char** argv) {
   argc--, argv++;
   const char *config_file = NULL;
+  bool enable_accessibility = false;
   if (argc >= 2 && strcmp(argv[0], "--config") == 0) {
     config_file = argv[1];
     argc -= 2, argv += 2;
   } else {
     SwitchDirectory();
+  }
+  // Check for --accessibility anywhere in remaining args
+  for (int i = 0; i < argc; i++) {
+    if (strcmp(argv[i], "--accessibility") == 0) {
+      enable_accessibility = true;
+      // Shift remaining args down
+      for (int j = i; j < argc - 1; j++)
+        argv[j] = argv[j + 1];
+      argc--;
+      i--;
+    }
   }
   ParseConfigFile(config_file);
   LoadAssets();
@@ -336,6 +348,8 @@ int main(int argc, char** argv) {
 
   Accessibility_Init();
   SpatialAudio_Init(g_config.audio_freq ? g_config.audio_freq : kDefaultFreq);
+  if (enable_accessibility)
+    SpatialAudio_Enable();
 
   bool custom_size  = g_config.window_width != 0 && g_config.window_height != 0;
   int window_width  = custom_size ? g_config.window_width  : g_current_window_scale * g_snes_width;
@@ -573,6 +587,16 @@ static void HandleCommand_Locked(uint32 j, bool pressed);
 
 static void HandleCommand(uint32 j, bool pressed) {
   if (j <= kKeys_Controls_Last) {
+    // When legend is active, intercept Up/Down for navigation, block other controls
+    if (SpatialAudio_IsLegendActive()) {
+      if (pressed) {
+        if (j == kKeys_Controls + 0)       // Up
+          SpatialAudio_LegendNavigate(-1);
+        else if (j == kKeys_Controls + 1)  // Down
+          SpatialAudio_LegendNavigate(1);
+      }
+      return;  // swallow all controls during legend
+    }
     static const uint8 kKbdRemap[] = { 0, 4, 5, 6, 7, 2, 3, 8, 0, 9, 1, 10, 11 };
     if (pressed)
       g_input1_state |= 1 << kKbdRemap[j];
@@ -663,12 +687,23 @@ static void HandleCommand_Locked(uint32 j, bool pressed) {
     case kKeys_SpeakHealth:
       SpatialAudio_SpeakHealth();
       break;
+    case kKeys_SpeakLocation:
+      SpatialAudio_SpeakLocation();
+      break;
+    case kKeys_SoundLegend:
+      SpatialAudio_ToggleLegend();
+      break;
     default: assert(0);
     }
   }
 }
 
 static void HandleInput(int keyCode, int keyMod, bool pressed) {
+  // Escape closes legend mode
+  if (pressed && keyCode == SDLK_ESCAPE && SpatialAudio_IsLegendActive()) {
+    SpatialAudio_ToggleLegend();
+    return;
+  }
   int j = FindCmdForSdlKey(keyCode, keyMod);
   if (j != 0)
     HandleCommand(j, pressed);
