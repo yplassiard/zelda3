@@ -470,8 +470,8 @@ int main(int argc, char** argv) {
       continue;
     }
 
-    // Freeze game while sound legend is open (audio keeps running for demo sounds)
-    if (SpatialAudio_IsLegendActive()) {
+    // Freeze game while sound legend or options menu is open
+    if (SpatialAudio_IsLegendActive() || SpatialAudio_IsOptionsActive()) {
       SDL_Delay(16);
       continue;
     }
@@ -603,6 +603,22 @@ static void HandleCommand(uint32 j, bool pressed) {
       }
       return;  // swallow all controls during legend
     }
+    // When options menu is active, intercept navigation keys
+    if (SpatialAudio_IsOptionsActive()) {
+      if (pressed) {
+        if (j == kKeys_Controls + 0)       // Up
+          SpatialAudio_OptionsNavigate(-1);
+        else if (j == kKeys_Controls + 1)  // Down
+          SpatialAudio_OptionsNavigate(1);
+        else if (j == kKeys_Controls + 2)  // Left
+          SpatialAudio_OptionsAdjust(-1);
+        else if (j == kKeys_Controls + 3)  // Right
+          SpatialAudio_OptionsAdjust(1);
+        else if (j == kKeys_Controls + 5)  // Select/Start (Return)
+          SpatialAudio_OptionsSelect();
+      }
+      return;  // swallow all controls during options
+    }
     static const uint8 kKbdRemap[] = { 0, 4, 5, 6, 7, 2, 3, 8, 0, 9, 1, 10, 11 };
     if (pressed)
       g_input1_state |= 1 << kKbdRemap[j];
@@ -699,15 +715,27 @@ static void HandleCommand_Locked(uint32 j, bool pressed) {
     case kKeys_SoundLegend:
       SpatialAudio_ToggleLegend();
       break;
+    case kKeys_AccessibilityOptions:
+      SpatialAudio_ToggleOptions();
+      break;
     default: assert(0);
     }
   }
 }
 
+// Defined in spatial_audio.c — returns true if escape went back in a submenu
+extern bool OptionsHandleEscape(void);
+
 static void HandleInput(int keyCode, int keyMod, bool pressed) {
   // Escape closes legend mode
   if (pressed && keyCode == SDLK_ESCAPE && SpatialAudio_IsLegendActive()) {
     SpatialAudio_ToggleLegend();
+    return;
+  }
+  // Escape in options: go back in submenu or close
+  if (pressed && keyCode == SDLK_ESCAPE && SpatialAudio_IsOptionsActive()) {
+    if (!OptionsHandleEscape())
+      SpatialAudio_ToggleOptions();
     return;
   }
   int j = FindCmdForSdlKey(keyCode, keyMod);

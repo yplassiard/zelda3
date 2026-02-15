@@ -77,4 +77,16 @@ void SpeechSynthesis_Shutdown(void) {
   g_nvda_available = 0;
 }
 
+// Voice/volume API stubs — NVDA controls its own settings
+void SpeechSynthesis_SetVolume(float volume) { (void)volume; }
+float SpeechSynthesis_GetVolume(void) { return 1.0f; }
+int SpeechSynthesis_GetVoiceCount(void) { return 0; }
+const char *SpeechSynthesis_GetVoiceName(int index) { (void)index; return NULL; }
+const char *SpeechSynthesis_GetVoiceId(int index) { (void)index; return NULL; }
+void SpeechSynthesis_SetVoice(int index) { (void)index; }
+void SpeechSynthesis_SetVoiceById(const char *identifier) { (void)identifier; }
+int SpeechSynthesis_GetCurrentVoiceIndex(void) { return 0; }
+float SpeechSynthesis_GetRate(void) { return 0.5f; }
+void SpeechSynthesis_SetRate(float rate) { (void)rate; }
+
 #endif  // _WIN32

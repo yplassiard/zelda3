@@ -40,6 +40,7 @@ enum {
   kKeys_SpeakHealth,
   kKeys_SpeakLocation,
   kKeys_SoundLegend,
+  kKeys_AccessibilityOptions,
   kKeys_Total,
 };
 

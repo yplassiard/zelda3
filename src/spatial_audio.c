@@ -280,7 +280,35 @@ static const uint16 kBaseFreq[kSpatialCue_Count] = {
   300,  // Conveyor — double-pulse pattern
 };
 
-#define SCAN_RANGE 96
+// Per-group volume control (0-100, default 100)
+static int g_cue_group_volume[kCueGroup_Count];
+static int g_scan_range = 96;  // was SCAN_RANGE macro
+
+// Options menu state
+static bool g_options_active;
+static int g_options_index;
+static int g_options_menu;   // 0=top, 1=voice submenu, 2=sound setup
+
+static int CueToGroup(int cue) {
+  switch (cue) {
+  case kSpatialCue_WallN: case kSpatialCue_WallS:
+  case kSpatialCue_WallE: case kSpatialCue_WallW: return kCueGroup_Walls;
+  case kSpatialCue_HoleL: case kSpatialCue_HoleR: return kCueGroup_Holes;
+  case kSpatialCue_Enemy: return kCueGroup_Enemy;
+  case kSpatialCue_NPC: return kCueGroup_NPC;
+  case kSpatialCue_Chest: return kCueGroup_Chest;
+  case kSpatialCue_Liftable: return kCueGroup_Liftable;
+  case kSpatialCue_Door: return kCueGroup_Door;
+  case kSpatialCue_StairUp: case kSpatialCue_StairDown: return kCueGroup_Stairs;
+  case kSpatialCue_Ledge: return kCueGroup_Ledge;
+  case kSpatialCue_DeepWater: return kCueGroup_DeepWater;
+  case kSpatialCue_Hazard: return kCueGroup_Hazard;
+  case kSpatialCue_Conveyor: return kCueGroup_Conveyor;
+  default: return -1;
+  }
+}
+
+#define SCAN_RANGE g_scan_range
 
 static uint32 isqrt32(uint32 n) {
   if (n == 0) return 0;
@@ -492,6 +520,14 @@ void SpatialAudio_Init(int sample_rate) {
   memset(g_phase, 0, sizeof(g_phase));
   memset(g_cue_snapshot, 0, sizeof(g_cue_snapshot));
 
+  // Initialize cue group volumes to 100%
+  for (int i = 0; i < kCueGroup_Count; i++)
+    g_cue_group_volume[i] = 100;
+  g_scan_range = 96;
+  g_options_active = false;
+  g_options_index = 0;
+  g_options_menu = 0;
+
   for (int i = 0; i < 256; i++)
     g_sine_table[i] = (int16)(sinf(2.0f * 3.14159265f * i / 256.0f) * 16383.0f);
 
@@ -682,6 +718,9 @@ void SpatialAudio_Init(int sample_rate) {
   g_d7_inc = (uint32)((uint64)2349 * 256 * 65536 / sample_rate);
   g_passage_chime_len = sample_rate * 120 / 1000;  // 120ms total
   for (int i = 0; i < 4; i++) { g_prev_beam_dist[i] = SCAN_RANGE; g_passage_pos[i] = -1; }
+
+  // Load saved settings (overrides defaults above)
+  SpatialAudio_LoadSettings();
 }
 
 void SpatialAudio_Shutdown(void) {
@@ -695,6 +734,9 @@ void SpatialAudio_Toggle(void) {
     if (g_legend_active) {
       g_legend_active = false;
       g_legend_demo_pos = -1;
+    }
+    if (g_options_active) {
+      g_options_active = false;
     }
   }
 #if defined(__APPLE__) || defined(_WIN32)
@@ -1901,6 +1943,11 @@ void SpatialAudio_MixAudio(int16 *buf, int samples, int channels) {
         if (!pulse_on) volume = 0;
       }
 
+      // Apply per-group volume
+      int grp = CueToGroup(c);
+      if (grp >= 0)
+        volume = volume * g_cue_group_volume[grp] / 100;
+
       int gain_L, gain_R;
       if (c >= kSpatialCue_WallN && c <= kSpatialCue_WallW) {
         // Hard-pan wall cues by direction for clear spatial distinction
@@ -2014,6 +2061,7 @@ void SpatialAudio_MixAudio(int16 *buf, int samples, int channels) {
       int16 raw = g_sine_table[(g_blocked_phase >> 16) & 0xFF];
       g_blocked_phase += g_blocked_phase_inc;
       int32 scaled = (int32)raw * (int)(g_blocked_envelope >> 8) >> 8;
+      scaled = scaled * g_cue_group_volume[kCueGroup_Combat] / 100;
       mix_L += scaled;
       mix_R += scaled;
     }
@@ -2039,6 +2087,7 @@ void SpatialAudio_MixAudio(int16 *buf, int samples, int channels) {
       int16 raw = g_sine_table[(g_hole_warn_phase >> 16) & 0xFF];
       g_hole_warn_phase += warn_inc;
       int32 scaled = (int32)raw * (int)(g_hole_warn_envelope >> 8) >> 8;
+      scaled = scaled * g_cue_group_volume[kCueGroup_Holes] / 100;
       // Pan based on hole's horizontal direction
       int cdx = g_hole_warn_dx < -16 ? -16 : (g_hole_warn_dx > 16 ? 16 : g_hole_warn_dx);
       int wL = (16 - cdx) * 8;  // 0-256 range
@@ -2065,6 +2114,7 @@ void SpatialAudio_MixAudio(int16 *buf, int samples, int channels) {
         g_sword_range_phase += g_sword_range_phase_inc;
         int vol = 65536 - (g_sword_range_beep_pos * 65536 / beep1_end);
         int32 scaled = (int32)raw * (vol >> 8) >> 8;
+        scaled = scaled * g_cue_group_volume[kCueGroup_Combat] / 100;
         mix_L += scaled;
         mix_R += scaled;
       } else if (g_sword_range_beep_pos >= gap_end && g_sword_range_beep_pos < beep2_end) {
@@ -2075,6 +2125,7 @@ void SpatialAudio_MixAudio(int16 *buf, int samples, int channels) {
         g_sword_range_phase += g_sword_range_phase_inc2;
         int vol = 65536 - (pos_in_beep * 65536 / beep_len);
         int32 scaled = (int32)raw * (vol >> 8) >> 8;
+        scaled = scaled * g_cue_group_volume[kCueGroup_Combat] / 100;
         mix_L += scaled;
         mix_R += scaled;
       }
@@ -2094,6 +2145,7 @@ void SpatialAudio_MixAudio(int16 *buf, int samples, int channels) {
         // Fade out over duration
         int vol = (g_danger_drill_len - g_danger_drill_pos) * 256 / g_danger_drill_len;
         int32 scaled = (int32)raw * vol >> 8;
+        scaled = scaled * g_cue_group_volume[kCueGroup_Combat] / 100;
         mix_L += scaled;
         mix_R += scaled;
       }
@@ -2121,8 +2173,9 @@ void SpatialAudio_MixAudio(int16 *buf, int samples, int channels) {
         raw = (int16)((int32)raw * fade >> 8);
       }
       if (raw) {
-        mix_L += raw;
-        mix_R += raw;
+        int32 dr = (int32)raw * g_cue_group_volume[kCueGroup_Combat] / 100;
+        mix_L += dr;
+        mix_R += dr;
       }
       g_danger_exit_pos++;
     }
@@ -2140,6 +2193,7 @@ void SpatialAudio_MixAudio(int16 *buf, int samples, int channels) {
       int16 raw = g_sine_table[(g_align_phase >> 16) & 0xFF];
       g_align_phase += g_align_phase_inc;
       int32 scaled = (int32)raw * (int)(g_align_envelope >> 8) >> 8;
+      scaled = scaled * g_cue_group_volume[kCueGroup_Combat] / 100;
       mix_L += scaled;
       mix_R += scaled;
     }
@@ -2198,6 +2252,7 @@ void SpatialAudio_MixAudio(int16 *buf, int samples, int channels) {
         vol = vol * (128 + (am_sin >> 8)) >> 8;
       }
       int32 scaled = (int32)raw * vol >> 8;
+      scaled = scaled * g_cue_group_volume[kCueGroup_Terrain] / 100;
       mix_L += scaled;
       mix_R += scaled;
       g_terrain_envelope = (uint32)((uint64)g_terrain_envelope * g_terrain_decay >> 16);
@@ -2558,6 +2613,7 @@ static void LegendStartDemo(int index) {
 
 void SpatialAudio_ToggleLegend(void) {
   if (!g_enabled) return;
+  if (g_options_active) return;
   g_legend_active = !g_legend_active;
   if (g_legend_active) {
     g_legend_index = 0;
@@ -2584,4 +2640,405 @@ void SpatialAudio_LegendNavigate(int dir) {
   SpeechSynthesis_Speak(kLegendNames[g_legend_index]);
 #endif
   LegendStartDemo(g_legend_index);
+}
+
+// --- Accessibility Options Menu ---
+
+// Top-level menu items
+enum {
+  kTopMenu_SpeechRate,
+  kTopMenu_SpeechVoice,
+  kTopMenu_SpeechVolume,
+  kTopMenu_SoundSetup,
+  kTopMenu_SaveOptions,
+  kTopMenu_Count,
+};
+
+static const char * const kTopMenuNames[kTopMenu_Count] = {
+  "Speech Rate",
+  "Speech Voice",
+  "Speech Volume",
+  "Sound Setup",
+  "Save Options",
+};
+
+// Sound setup submenu items
+enum {
+  kSoundSetup_Walls,
+  kSoundSetup_Holes,
+  kSoundSetup_Enemy,
+  kSoundSetup_NPC,
+  kSoundSetup_Chest,
+  kSoundSetup_Liftable,
+  kSoundSetup_Door,
+  kSoundSetup_Stairs,
+  kSoundSetup_Ledge,
+  kSoundSetup_DeepWater,
+  kSoundSetup_Hazard,
+  kSoundSetup_Conveyor,
+  kSoundSetup_Terrain,
+  kSoundSetup_Combat,
+  kSoundSetup_DetectionRange,
+  kSoundSetup_Back,
+  kSoundSetup_Count,
+};
+
+static const char * const kSoundSetupNames[kSoundSetup_Count] = {
+  "Walls volume",
+  "Holes and Pits volume",
+  "Enemy volume",
+  "NPC volume",
+  "Chest volume",
+  "Liftable volume",
+  "Door volume",
+  "Stairs volume",
+  "Ledge volume",
+  "Deep Water volume",
+  "Hazard volume",
+  "Conveyor volume",
+  "Terrain volume",
+  "Combat volume",
+  "Detection Range",
+  "Back",
+};
+
+bool SpatialAudio_IsOptionsActive(void) {
+  return g_options_active;
+}
+
+#if defined(__APPLE__) || defined(_WIN32)
+static void OptionsAnnounceCurrentItem(void) {
+  char buf[128];
+  if (g_options_menu == 0) {
+    // Top-level menu
+    switch (g_options_index) {
+    case kTopMenu_SpeechRate: {
+      int pct = (int)(SpeechSynthesis_GetRate() * 200);
+      snprintf(buf, sizeof(buf), "Speech Rate, %d percent", pct);
+      SpeechSynthesis_Speak(buf);
+      break;
+    }
+    case kTopMenu_SpeechVoice: {
+      int vi = SpeechSynthesis_GetCurrentVoiceIndex();
+      const char *name = SpeechSynthesis_GetVoiceName(vi);
+      snprintf(buf, sizeof(buf), "Speech Voice, %s", name ? name : "default");
+      SpeechSynthesis_Speak(buf);
+      break;
+    }
+    case kTopMenu_SpeechVolume: {
+      int pct = (int)(SpeechSynthesis_GetVolume() * 100);
+      snprintf(buf, sizeof(buf), "Speech Volume, %d percent", pct);
+      SpeechSynthesis_Speak(buf);
+      break;
+    }
+    case kTopMenu_SoundSetup:
+      SpeechSynthesis_Speak("Sound Setup");
+      break;
+    case kTopMenu_SaveOptions:
+      SpeechSynthesis_Speak("Save Options");
+      break;
+    }
+  } else if (g_options_menu == 1) {
+    // Voice submenu
+    const char *name = SpeechSynthesis_GetVoiceName(g_options_index);
+    int cur = SpeechSynthesis_GetCurrentVoiceIndex();
+    if (name) {
+      if (g_options_index == cur)
+        snprintf(buf, sizeof(buf), "%s, selected", name);
+      else
+        snprintf(buf, sizeof(buf), "%s", name);
+      SpeechSynthesis_Speak(buf);
+    }
+  } else if (g_options_menu == 2) {
+    // Sound setup submenu
+    if (g_options_index < kCueGroup_Count) {
+      snprintf(buf, sizeof(buf), "%s, %d percent",
+               kSoundSetupNames[g_options_index], g_cue_group_volume[g_options_index]);
+      SpeechSynthesis_Speak(buf);
+    } else if (g_options_index == kSoundSetup_DetectionRange) {
+      snprintf(buf, sizeof(buf), "Detection Range, %d", g_scan_range);
+      SpeechSynthesis_Speak(buf);
+    } else if (g_options_index == kSoundSetup_Back) {
+      SpeechSynthesis_Speak("Back");
+    }
+  }
+}
+#endif
+
+void SpatialAudio_ToggleOptions(void) {
+  if (!g_enabled) return;
+  if (g_legend_active) return;
+  g_options_active = !g_options_active;
+  if (g_options_active) {
+    g_options_index = 0;
+    g_options_menu = 0;
+    memset(g_cue_snapshot, 0, sizeof(g_cue_snapshot));
+#if defined(__APPLE__) || defined(_WIN32)
+    SpeechSynthesis_Speak("Accessibility Options. Use Up and Down to navigate.");
+#endif
+  } else {
+#if defined(__APPLE__) || defined(_WIN32)
+    SpeechSynthesis_Speak("Options closed");
+#endif
+  }
+}
+
+void SpatialAudio_OptionsNavigate(int dir) {
+  if (!g_options_active) return;
+  int count;
+  if (g_options_menu == 0)
+    count = kTopMenu_Count;
+  else if (g_options_menu == 1)
+    count = SpeechSynthesis_GetVoiceCount();
+  else
+    count = kSoundSetup_Count;
+
+  if (count <= 0) return;
+  g_options_index += dir;
+  if (g_options_index < 0) g_options_index = count - 1;
+  if (g_options_index >= count) g_options_index = 0;
+#if defined(__APPLE__) || defined(_WIN32)
+  OptionsAnnounceCurrentItem();
+#endif
+}
+
+void SpatialAudio_OptionsAdjust(int dir) {
+  if (!g_options_active) return;
+#if defined(__APPLE__) || defined(_WIN32)
+  char buf[64];
+#endif
+
+  if (g_options_menu == 0) {
+    // Top-level sliders
+    switch (g_options_index) {
+    case kTopMenu_SpeechRate: {
+      float rate = SpeechSynthesis_GetRate() + dir * 0.05f;
+      SpeechSynthesis_SetRate(rate);
+      int pct = (int)(SpeechSynthesis_GetRate() * 200);
+#if defined(__APPLE__) || defined(_WIN32)
+      snprintf(buf, sizeof(buf), "%d percent", pct);
+      SpeechSynthesis_Speak(buf);
+#endif
+      break;
+    }
+    case kTopMenu_SpeechVolume: {
+      float vol = SpeechSynthesis_GetVolume() + dir * 0.1f;
+      SpeechSynthesis_SetVolume(vol);
+      int pct = (int)(SpeechSynthesis_GetVolume() * 100);
+#if defined(__APPLE__) || defined(_WIN32)
+      snprintf(buf, sizeof(buf), "%d percent", pct);
+      SpeechSynthesis_Speak(buf);
+#endif
+      break;
+    }
+    default:
+      break;
+    }
+  } else if (g_options_menu == 2) {
+    // Sound setup sliders
+    if (g_options_index < kCueGroup_Count) {
+      int vol = g_cue_group_volume[g_options_index] + dir * 10;
+      if (vol < 0) vol = 0;
+      if (vol > 100) vol = 100;
+      g_cue_group_volume[g_options_index] = vol;
+#if defined(__APPLE__) || defined(_WIN32)
+      snprintf(buf, sizeof(buf), "%d percent", vol);
+      SpeechSynthesis_Speak(buf);
+#endif
+    } else if (g_options_index == kSoundSetup_DetectionRange) {
+      int range = g_scan_range + dir * 16;
+      if (range < 32) range = 32;
+      if (range > 192) range = 192;
+      g_scan_range = range;
+#if defined(__APPLE__) || defined(_WIN32)
+      snprintf(buf, sizeof(buf), "%d", range);
+      SpeechSynthesis_Speak(buf);
+#endif
+    }
+  }
+}
+
+void SpatialAudio_OptionsSelect(void) {
+  if (!g_options_active) return;
+
+  if (g_options_menu == 0) {
+    switch (g_options_index) {
+    case kTopMenu_SpeechVoice: {
+      int vc = SpeechSynthesis_GetVoiceCount();
+      if (vc > 0) {
+        g_options_menu = 1;
+        g_options_index = SpeechSynthesis_GetCurrentVoiceIndex();
+#if defined(__APPLE__) || defined(_WIN32)
+        SpeechSynthesis_Speak("Voice selection. Use Up and Down, Enter to select, Escape to go back.");
+#endif
+      }
+      break;
+    }
+    case kTopMenu_SoundSetup:
+      g_options_menu = 2;
+      g_options_index = 0;
+#if defined(__APPLE__) || defined(_WIN32)
+      SpeechSynthesis_Speak("Sound Setup. Use Up and Down to navigate, Left and Right to adjust.");
+#endif
+      break;
+    case kTopMenu_SaveOptions:
+      SpatialAudio_SaveSettings();
+#if defined(__APPLE__) || defined(_WIN32)
+      SpeechSynthesis_Speak("Options saved");
+#endif
+      break;
+    default:
+      break;
+    }
+  } else if (g_options_menu == 1) {
+    // Voice submenu: select voice
+    SpeechSynthesis_SetVoice(g_options_index);
+#if defined(__APPLE__) || defined(_WIN32)
+    {
+      char buf[128];
+      const char *name = SpeechSynthesis_GetVoiceName(g_options_index);
+      snprintf(buf, sizeof(buf), "%s selected", name ? name : "voice");
+      SpeechSynthesis_Speak(buf);
+    }
+#endif
+    // Return to top menu
+    g_options_menu = 0;
+    g_options_index = kTopMenu_SpeechVoice;
+  } else if (g_options_menu == 2) {
+    if (g_options_index == kSoundSetup_Back) {
+      g_options_menu = 0;
+      g_options_index = kTopMenu_SoundSetup;
+#if defined(__APPLE__) || defined(_WIN32)
+      OptionsAnnounceCurrentItem();
+#endif
+    }
+  }
+}
+
+// Escape handling for submenus: returns true if handled (went back), false if should close
+bool OptionsHandleEscape(void) {
+  if (g_options_menu == 1) {
+    g_options_index = kTopMenu_SpeechVoice;
+    g_options_menu = 0;
+#if defined(__APPLE__) || defined(_WIN32)
+    OptionsAnnounceCurrentItem();
+#endif
+    return true;
+  }
+  if (g_options_menu == 2) {
+    g_options_index = kTopMenu_SoundSetup;
+    g_options_menu = 0;
+#if defined(__APPLE__) || defined(_WIN32)
+    OptionsAnnounceCurrentItem();
+#endif
+    return true;
+  }
+  return false;
+}
+
+// Settings getters/setters
+int SpatialAudio_GetCueGroupVolume(int group) {
+  if (group < 0 || group >= kCueGroup_Count) return 100;
+  return g_cue_group_volume[group];
+}
+
+void SpatialAudio_SetCueGroupVolume(int group, int vol) {
+  if (group < 0 || group >= kCueGroup_Count) return;
+  if (vol < 0) vol = 0;
+  if (vol > 100) vol = 100;
+  g_cue_group_volume[group] = vol;
+}
+
+int SpatialAudio_GetScanRange(void) {
+  return g_scan_range;
+}
+
+void SpatialAudio_SetScanRange(int range) {
+  if (range < 32) range = 32;
+  if (range > 192) range = 192;
+  g_scan_range = range;
+}
+
+// --- Settings Persistence ---
+
+static const char * const kCueGroupKeys[kCueGroup_Count] = {
+  "walls_volume", "holes_volume", "enemy_volume", "npc_volume",
+  "chest_volume", "liftable_volume", "door_volume", "stairs_volume",
+  "ledge_volume", "deepwater_volume", "hazard_volume", "conveyor_volume",
+  "terrain_volume", "combat_volume",
+};
+
+void SpatialAudio_SaveSettings(void) {
+  FILE *f = fopen("zelda3_a11y.ini", "w");
+  if (!f) return;
+
+  fprintf(f, "[Accessibility]\n");
+
+#if defined(__APPLE__)
+  fprintf(f, "speech_rate=%.3f\n", SpeechSynthesis_GetRate());
+  fprintf(f, "speech_volume=%.2f\n", SpeechSynthesis_GetVolume());
+  const char *vid = SpeechSynthesis_GetVoiceId(SpeechSynthesis_GetCurrentVoiceIndex());
+  if (vid)
+    fprintf(f, "speech_voice_id=%s\n", vid);
+#endif
+
+  for (int i = 0; i < kCueGroup_Count; i++)
+    fprintf(f, "%s=%d\n", kCueGroupKeys[i], g_cue_group_volume[i]);
+  fprintf(f, "scan_range=%d\n", g_scan_range);
+
+  fclose(f);
+}
+
+void SpatialAudio_LoadSettings(void) {
+  FILE *f = fopen("zelda3_a11y.ini", "r");
+  if (!f) return;
+
+  char line[256];
+  while (fgets(line, sizeof(line), f)) {
+    // Strip newline
+    char *nl = strchr(line, '\n');
+    if (nl) *nl = '\0';
+    nl = strchr(line, '\r');
+    if (nl) *nl = '\0';
+
+    // Skip comments and section headers
+    if (line[0] == '#' || line[0] == ';' || line[0] == '[' || line[0] == '\0')
+      continue;
+
+    char *eq = strchr(line, '=');
+    if (!eq) continue;
+    *eq = '\0';
+    const char *key = line;
+    const char *val = eq + 1;
+
+#if defined(__APPLE__)
+    if (strcmp(key, "speech_rate") == 0) {
+      SpeechSynthesis_SetRate((float)atof(val));
+      continue;
+    }
+    if (strcmp(key, "speech_volume") == 0) {
+      SpeechSynthesis_SetVolume((float)atof(val));
+      continue;
+    }
+    if (strcmp(key, "speech_voice_id") == 0) {
+      SpeechSynthesis_SetVoiceById(val);
+      continue;
+    }
+#endif
+
+    if (strcmp(key, "scan_range") == 0) {
+      int r = atoi(val);
+      if (r >= 32 && r <= 192) g_scan_range = r;
+      continue;
+    }
+
+    for (int i = 0; i < kCueGroup_Count; i++) {
+      if (strcmp(key, kCueGroupKeys[i]) == 0) {
+        int v = atoi(val);
+        if (v >= 0 && v <= 100) g_cue_group_volume[i] = v;
+        break;
+      }
+    }
+  }
+  fclose(f);
 }
