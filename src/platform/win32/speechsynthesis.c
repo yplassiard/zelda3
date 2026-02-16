@@ -77,6 +77,8 @@ void SpeechSynthesis_Shutdown(void) {
   g_nvda_available = 0;
 }
 
+void SpeechSynthesis_SetLanguage(const char *lang_prefix) { (void)lang_prefix; }
+
 // Voice/volume API stubs — NVDA controls its own settings
 void SpeechSynthesis_SetVolume(float volume) { (void)volume; }
 float SpeechSynthesis_GetVolume(void) { return 1.0f; }

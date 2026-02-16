@@ -14,23 +14,40 @@ static char *g_voice_names[MAX_VOICES];
 static char *g_voice_ids[MAX_VOICES];
 static int g_current_voice_index;
 static NSString *g_current_voice_id;
+static NSString *g_lang_prefix;
+
+static void FreeVoiceList(void) {
+  for (int i = 0; i < g_voice_count; i++) {
+    free(g_voice_names[i]);
+    free(g_voice_ids[i]);
+  }
+  g_voice_count = 0;
+}
 
 static void EnumerateVoices(void) {
-  g_voice_count = 0;
+  FreeVoiceList();
+  g_current_voice_index = 0;
   NSArray<AVSpeechSynthesisVoice *> *voices = [AVSpeechSynthesisVoice speechVoices];
   for (AVSpeechSynthesisVoice *v in voices) {
     if (g_voice_count >= MAX_VOICES) break;
     NSString *lang = [v language];
-    if (![lang hasPrefix:@"en"]) continue;
+    if (![lang hasPrefix:g_lang_prefix]) continue;
     const char *name = [[v name] UTF8String];
     const char *vid = [[v identifier] UTF8String];
     if (!name || !vid) continue;
     g_voice_names[g_voice_count] = strdup(name);
     g_voice_ids[g_voice_count] = strdup(vid);
-    // Check if this is the current voice
     if (g_current_voice_id && [g_current_voice_id isEqualToString:[v identifier]])
       g_current_voice_index = g_voice_count;
     g_voice_count++;
+  }
+  // If current voice wasn't found in the new list, pick first available
+  if (g_voice_count > 0 && g_current_voice_index == 0 && g_current_voice_id) {
+    // Check if index 0 actually matches
+    if (strcmp(g_voice_ids[0], [g_current_voice_id UTF8String]) != 0) {
+      g_current_voice_id = [NSString stringWithUTF8String:g_voice_ids[0]];
+      g_current_voice_index = 0;
+    }
   }
 }
 
@@ -38,9 +55,24 @@ void SpeechSynthesis_Init(void) {
   @autoreleasepool {
     g_synth = [[AVSpeechSynthesizer alloc] init];
     g_speech_rate = AVSpeechUtteranceDefaultSpeechRate;
+    g_lang_prefix = @"en";
     g_current_voice_id = @"com.apple.voice.compact.en-US.Samantha";
     g_current_voice_index = 0;
     EnumerateVoices();
+  }
+}
+
+void SpeechSynthesis_SetLanguage(const char *lang_prefix) {
+  if (!lang_prefix || !lang_prefix[0]) return;
+  @autoreleasepool {
+    g_lang_prefix = [NSString stringWithUTF8String:lang_prefix];
+    // Pick a default voice for this language
+    g_current_voice_id = nil;
+    EnumerateVoices();
+    if (g_voice_count > 0) {
+      g_current_voice_id = [NSString stringWithUTF8String:g_voice_ids[0]];
+      g_current_voice_index = 0;
+    }
   }
 }
 
@@ -96,13 +128,10 @@ void SpeechSynthesis_Shutdown(void) {
         [g_synth stopSpeakingAtBoundary:AVSpeechBoundaryImmediate];
       g_synth = nil;
       g_current_voice_id = nil;
+      g_lang_prefix = nil;
     }
   }
-  for (int i = 0; i < g_voice_count; i++) {
-    free(g_voice_names[i]);
-    free(g_voice_ids[i]);
-  }
-  g_voice_count = 0;
+  FreeVoiceList();
 }
 
 void SpeechSynthesis_SetVolume(float volume) {

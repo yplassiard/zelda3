@@ -2631,6 +2631,7 @@ void RenderText_FindYItem_Previous() {  // 8ecdc8
     choice_in_multiselect_box--;
   }
   RenderText_DrawSelectedYItem();
+  Accessibility_AnnounceChooseItem(choice_in_multiselect_box);
 }
 
 void RenderText_FindYItem_Next() {  // 8ecded
@@ -2643,6 +2644,7 @@ void RenderText_FindYItem_Next() {  // 8ecded
     choice_in_multiselect_box++;
   }
   RenderText_DrawSelectedYItem();
+  Accessibility_AnnounceChooseItem(choice_in_multiselect_box);
 }
 
 void RenderText_DrawSelectedYItem() {  // 8ece14

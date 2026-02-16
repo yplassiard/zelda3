@@ -27,6 +27,7 @@
 #include "util.h"
 #include "audio.h"
 #include "accessibility.h"
+#include "a11y_strings.h"
 #include "spatial_audio.h"
 
 static bool g_run_without_emu = 0;
@@ -346,7 +347,10 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  A11yStrings_Init(g_config.language);
   Accessibility_Init();
+  if (g_config.language && g_config.language[0])
+    Accessibility_SetLanguage(g_config.language);
   SpatialAudio_Init(g_config.audio_freq ? g_config.audio_freq : kDefaultFreq);
   if (enable_accessibility)
     SpatialAudio_Enable();

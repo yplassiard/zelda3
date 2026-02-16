@@ -30,7 +30,7 @@ $(TARGET_EXEC): $(OBJS) $(OBJC_OBJS) $(WIN_OBJS) $(RES)
 %.o : %.c
 	$(CC) -c $(CFLAGS) $< -o $@
 %.o : %.m
-	$(CC) -c $(CFLAGS) $< -o $@
+	$(CC) -c $(CFLAGS) -fobjc-arc $< -o $@
 
 $(RES): src/platform/win32/zelda3.rc
 	@echo "Generating Windows resources"

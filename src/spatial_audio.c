@@ -1,5 +1,7 @@
 #include "spatial_audio.h"
+#include "a11y_strings.h"
 #include "variables.h"
+#include "features.h"
 #include "tile_detect.h"
 #include "zelda_rtl.h"
 #include "assets.h"
@@ -83,17 +85,21 @@ static uint8 g_prev_module;
 static uint8 g_prev_submodule;
 static uint8 g_prev_cursor;
 
-// Dialog choice tracking
-static uint8 g_prev_choice;
-static uint8 g_prev_gameover_choice;
-
 // Inventory tracking
 static uint8 g_prev_hud_item;
+static uint8 g_prev_hud_item_x;
 static bool g_prev_menu_open;
 
 // Dungeon name tracking
 static uint16 g_prev_palace_index;
 static bool g_prev_indoors;
+
+// Overworld map / flute / dungeon map tracking
+static bool g_prev_ow_map_active;
+static uint8 g_prev_flute_sel;
+static bool g_prev_flute_active;
+static bool g_prev_dung_map_active;
+static uint16 g_prev_dungmap_floor;
 
 // Item collection tracking
 static uint16 g_prev_rupees;
@@ -331,184 +337,22 @@ static void Speak(const char *fmt, ...) {
   SpeechSynthesis_Speak(buf);
 }
 
-static const char *GetAreaName(uint16 area_idx) {
-  switch (area_idx) {
-  case 0: case 1: case 8: case 9: return "Lost Woods";
-  case 2: return "Lumberjack Estate";
-  case 3: case 4: case 11: case 12: return "Tower of Hera";
-  case 5: case 6: case 13: case 14: return "Death Mountain";
-  case 7: return "Turtle Rock";
-  case 10: return "Death Mountain Gateway";
-  case 15: return "Zora Falls";
-  case 16: return "Lost Woods Outskirts";
-  case 17: case 24: case 25: case 32: case 33: case 40: case 41: return "Kakariko Village";
-  case 18: return "Northern Pond";
-  case 19: return "Sanctuary";
-  case 20: return "Graveyard";
-  case 21: case 85: return "South Bend";
-  case 22: return "Coven of Commerce";
-  case 23: case 87: return "Zora Ridge";
-  case 26: case 90: return "West Woods";
-  case 27: case 28: case 35: case 36: return "Hyrule Castle";
-  case 29: return "Castle Bridge";
-  case 30: case 31: case 38: case 39: case 45: case 46: case 47: return "Eastern Ruins";
-  case 34: return "Smithy Estate";
-  case 37: case 101: return "Moundlands";
-  case 42: return "Haunted Grove";
-  case 43: case 44: return "Link's House";
-  case 48: case 49: case 56: case 57: return "Desert of Mystery";
-  case 50: case 114: return "Haunted Terrace";
-  case 51: case 52: case 60: return "Hyrule Wetlands";
-  case 53: case 54: case 61: case 62: return "Lake Hylia";
-  case 55: return "Frosty Caves";
-  case 58: return "Via of Mystery";
-  case 59: return "Watergate";
-  case 63: return "Octorock Grounds";
-  case 64: case 65: case 72: case 73: case 80: return "Skull Woods";
-  case 66: return "Eastern Skull Clearing";
-  case 67: case 68: case 75: case 76: return "Ganon's Tower";
-  case 69: case 70: case 77: case 78: return "Dark Death Mountain";
-  case 71: return "Dark Turtle Rock";
-  case 79: return "Falls of Ill Omen";
-  case 81: case 88: case 89: case 96: case 97: return "Village of Outcasts";
-  case 82: return "Dark Northern Pond";
-  case 83: return "Dark Sanctuary";
-  case 84: return "Garden of Bad Things";
-  case 86: return "Riverside Commerce";
-  case 91: case 92: case 99: case 100: return "Pyramid of Power";
-  case 94: case 95: case 102: case 103: return "Maze of Darkness";
-  case 98: return "Gossip Shop";
-  case 104: return "Digging Game";
-  case 105: return "Archery Shop";
-  case 106: return "Depressing Grove";
-  case 107: case 108: return "Bomb Shop";
-  case 109: return "Hammer Bridge";
-  case 112: case 113: case 120: case 121: return "Swamp of Evil";
-  case 115: case 116: case 124: return "Wilted Wetlands";
-  case 117: case 118: case 125: case 126: return "Lake of Ill Omen";
-  case 123: return "Swamp Palace";
-  case 128: return "Master Sword Grove";
-  case 129: case 130: case 137: case 138: return "Zora Falls";
-  default: return NULL;
+// Direction lookup by link_direction_facing value
+static const char *GetDirectionName(uint8 dir, bool lowercase) {
+  if (lowercase) {
+    switch (dir) {
+    case 0: return A11y(kA11y_north);
+    case 2: return A11y(kA11y_south);
+    case 4: return A11y(kA11y_left);
+    case 6: return A11y(kA11y_right);
+    default: return NULL;
+    }
   }
-}
-
-// Short names for overworld entrance IDs (which_entrance values)
-static const char * const kEntranceShortNames[] = {
-  "Link's House",      // 0
-  "Link's House",      // 1
-  "Sanctuary",         // 2
-  "Hyrule Castle",     // 3
-  "Hyrule Castle",     // 4
-  "Hyrule Castle",     // 5
-  "Cave",              // 6
-  "Cave",              // 7
-  "Eastern Palace",    // 8
-  "Desert Palace",     // 9
-  "Desert Palace",     // 10
-  "Desert Palace",     // 11
-  "Desert Palace",     // 12
-  "Elder's House",     // 13
-  "Elder's House",     // 14
-  "Angry Brothers",    // 15
-  "Angry Brothers",    // 16
-  "Mad Batter",        // 17
-  "Lumberjack Tree",   // 18
-  "Cave",              // 19
-  "Cave",              // 20
-  "Cave",              // 21
-  "Cave",              // 22
-  "Cave",              // 23
-  "Cave",              // 24
-  "Cave",              // 25
-  "Cave",              // 26
-  "Cave",              // 27
-  "Cave",              // 28
-  "Cave",              // 29
-  "Cave",              // 30
-  "Cave",              // 31
-  "Cave",              // 32
-  "Castle Tower",      // 33
-  "Swamp Palace",      // 34
-  "Palace of Darkness",// 35
-  "Misery Mire",       // 36
-  "Skull Woods",       // 37
-  "Skull Woods",       // 38
-  "Skull Woods",       // 39
-  "Skull Woods",       // 40
-  "Thieves Lair",      // 41
-  "Ice Palace",        // 42
-  "Cave",              // 43
-  "Cave",              // 44
-  "Elder Cave",        // 45
-  "Elder Cave",        // 46
-  "Castle Cellar",     // 47
-  "Tower of Hera",     // 48
-  "Thieves Town",      // 49
-  "Turtle Rock",       // 50
-  "Pyramid Sanctum",   // 51
-  "Ganon's Tower",     // 52
-  "Fairy Cave",        // 53
-  "Well",              // 54
-  "Cave",              // 55
-  "Cave",              // 56
-  "Treasure Game",     // 57
-  "Cave",              // 58
-  "House",             // 59
-  "House",             // 60
-  "Sick Boy's House",  // 61
-  "Cave",              // 62
-  "Pub",               // 63
-  "Pub",               // 64
-  "Inn",               // 65
-  "Sahasrahla",        // 66
-  "Shop",              // 67
-  "Chest Game",        // 68
-  "Orphanage",         // 69
-  "Library",           // 70
-  "Storage Shed",      // 71
-  "House",             // 72
-  "Potion Shop",       // 73
-  "Desert Cottage",    // 74
-  "Watergate",         // 75
-  "Cave",              // 76
-  "Fairy Cave",        // 77
-  "Cave",              // 78
-  "Cave",              // 79
-  "Shop",              // 80
-  "Cave",              // 81
-  "Archery Game",      // 82
-  "Cave",              // 83
-  "Cape Cave",         // 84
-  "Wishing Pond",      // 85
-  "Pond of Happiness", // 86
-  "Fairy Cave",        // 87
-  "Cave",              // 88
-  "Shop",              // 89
-  "Hideout",           // 90
-  "Cave",              // 91
-  "Warped Pond",       // 92
-  "Smithy",            // 93
-  "Fortune Teller",    // 94
-  "Fortune Teller",    // 95
-  "Chest Game",        // 96
-  "Cave",              // 97
-  "Cave",              // 98
-};
-#define NUM_ENTRANCE_NAMES (int)(sizeof(kEntranceShortNames) / sizeof(kEntranceShortNames[0]))
-
-static const char *GetEntranceName(int entrance_id) {
-  if (entrance_id >= 0 && entrance_id < NUM_ENTRANCE_NAMES)
-    return kEntranceShortNames[entrance_id];
-  return "Entrance";
-}
-
-static const char *GetDirectionName(uint8 dir) {
   switch (dir) {
-  case 0: return "North";
-  case 2: return "South";
-  case 4: return "Left";
-  case 6: return "Right";
+  case 0: return A11y(kA11y_North);
+  case 2: return A11y(kA11y_South);
+  case 4: return A11y(kA11y_Left);
+  case 6: return A11y(kA11y_Right);
   default: return NULL;
   }
 }
@@ -648,10 +492,14 @@ void SpatialAudio_Init(int sample_rate) {
   g_prev_module = 0xFF;
   g_prev_submodule = 0xFF;
   g_prev_cursor = 0xFF;
-  g_prev_choice = 0xFF;
-  g_prev_gameover_choice = 0xFF;
   g_prev_hud_item = 0xFF;
+  g_prev_hud_item_x = 0xFF;
   g_prev_menu_open = false;
+  g_prev_ow_map_active = false;
+  g_prev_flute_active = false;
+  g_prev_flute_sel = 0xFF;
+  g_prev_dung_map_active = false;
+  g_prev_dungmap_floor = 0xFFFF;
   g_prev_palace_index = 0xFFFF;
   g_prev_indoors = false;
   g_tracking_initialized = false;
@@ -740,7 +588,7 @@ void SpatialAudio_Toggle(void) {
     }
   }
 #if defined(__APPLE__) || defined(_WIN32)
-  SpeechSynthesis_Speak(g_enabled ? "Accessibility on" : "Accessibility off");
+  SpeechSynthesis_Speak(g_enabled ? A11y(kA11y_On) : A11y(kA11y_Off));
 #endif
 }
 
@@ -762,9 +610,9 @@ void SpatialAudio_SpeakHealth(void) {
   int half = (cur % 8) >= 4 ? 1 : 0;
   int max_hearts = cap / 8;
   if (half)
-    Speak("%d and a half out of %d hearts", hearts, max_hearts);
+    Speak(A11y(kA11y_FmtHeartsHalf), hearts, max_hearts);
   else
-    Speak("%d out of %d hearts", hearts, max_hearts);
+    Speak(A11y(kA11y_FmtHearts), hearts, max_hearts);
 #endif
 }
 
@@ -773,45 +621,37 @@ void SpatialAudio_SpeakLocation(void) {
 #if defined(__APPLE__) || defined(_WIN32)
   uint8 mod = main_module_index;
   if (mod != 7 && mod != 9 && mod != 14) {
-    SpeechSynthesis_Speak("In menu");
+    SpeechSynthesis_Speak(A11y(kA11y_InMenu));
     return;
   }
 
   // Area name
   const char *area = NULL;
   if (player_is_indoors) {
-    // Use inline dungeon name lookup since kDungeonNames is defined later
-    static const char *kDungNames[] = {
-      "Sanctuary", NULL, "Hyrule Castle", "Eastern Palace", "Desert Palace",
-      "Agahnims Tower", NULL, "Swamp Palace", "Palace of Darkness", "Misery Mire",
-      "Skull Woods", NULL, "Ice Palace", "Tower of Hera", "Thieves Town",
-      "Ganons Tower", "Agahnims Tower",
-    };
     uint8 idx = BYTE(cur_palace_index_x2) / 2;
-    if (idx < 17) area = kDungNames[idx];
+    area = A11yDungeonName(idx);
   } else {
-    area = GetAreaName(overworld_area_index);
+    area = A11yAreaName(overworld_area_index);
   }
 
   // Direction
-  const char *dir = GetDirectionName(link_direction_facing);
+  const char *dir = GetDirectionName(link_direction_facing, false);
 
   // Nearest entrance info (only overworld)
   const char *entrance = NULL;
   const char *entrance_dir = NULL;
   if (!player_is_indoors && g_nearest_entrance_idx >= 0) {
     uint8 eid = kOverworld_Entrance_Id[g_nearest_entrance_idx];
-    entrance = GetEntranceName(eid);
-    // Get direction to entrance from cue snapshot
+    entrance = A11yEntranceName(eid);
     if (g_cue_snapshot[kSpatialCue_Door].active) {
       int edx = g_cue_snapshot[kSpatialCue_Door].dx;
       int edy = g_cue_snapshot[kSpatialCue_Door].dy;
       int ax = edx < 0 ? -edx : edx;
       int ay = edy < 0 ? -edy : edy;
       if (ax > ay)
-        entrance_dir = (edx > 0) ? "right" : "left";
+        entrance_dir = (edx > 0) ? A11y(kA11y_right) : A11y(kA11y_left);
       else
-        entrance_dir = (edy > 0) ? "south" : "north";
+        entrance_dir = (edy > 0) ? A11y(kA11y_south) : A11y(kA11y_north);
     }
   }
 
@@ -824,9 +664,9 @@ void SpatialAudio_SpeakLocation(void) {
     int ax = ndx < 0 ? -ndx : ndx;
     int ay = ndy < 0 ? -ndy : ndy;
     if (ax > ay)
-      npc_dir = (ndx > 0) ? "right" : "left";
+      npc_dir = (ndx > 0) ? A11y(kA11y_right) : A11y(kA11y_left);
     else
-      npc_dir = (ndy > 0) ? "south" : "north";
+      npc_dir = (ndy > 0) ? A11y(kA11y_south) : A11y(kA11y_north);
   }
 
   // Build and speak summary
@@ -835,15 +675,15 @@ void SpatialAudio_SpeakLocation(void) {
   if (area)
     pos += snprintf(buf + pos, sizeof(buf) - pos, "%s. ", area);
   if (dir)
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "Facing %s. ", dir);
+    pos += snprintf(buf + pos, sizeof(buf) - pos, A11y(kA11y_FmtFacing), dir);
   if (entrance && entrance_dir)
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "%s to the %s. ", entrance, entrance_dir);
+    pos += snprintf(buf + pos, sizeof(buf) - pos, A11y(kA11y_FmtEntranceDir), entrance, entrance_dir);
   else if (entrance)
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "%s nearby. ", entrance);
+    pos += snprintf(buf + pos, sizeof(buf) - pos, A11y(kA11y_FmtEntranceNearby), entrance);
   if (has_npc && npc_dir)
-    pos += snprintf(buf + pos, sizeof(buf) - pos, "Someone to the %s. ", npc_dir);
+    pos += snprintf(buf + pos, sizeof(buf) - pos, A11y(kA11y_FmtNPCDir), npc_dir);
   if (pos == 0)
-    snprintf(buf, sizeof(buf), "Nothing nearby");
+    snprintf(buf, sizeof(buf), "%s", A11y(kA11y_FmtNothingNearby));
 
   SpeechSynthesis_Speak(buf);
 #endif
@@ -923,9 +763,9 @@ static void AnnounceMenuState(void) {
   if (mod_changed || (mod <= 1 && sub_changed)) {
     // Handle title/intro sequence (module 0)
     if (mod == 0 && mod_changed) {
-      SpeechSynthesis_Speak("Nintendo");
+      SpeechSynthesis_Speak(A11y(kA11y_Nintendo));
     } else if (mod == 0 && sub >= 5 && g_prev_submodule < 5) {
-      SpeechSynthesis_Speak("The Legend of Zelda");
+      SpeechSynthesis_Speak(A11y(kA11y_LegendOfZelda));
     }
 
     if (mod_changed) {
@@ -935,13 +775,13 @@ static void AnnounceMenuState(void) {
     g_prev_submodule = sub;
 
     if (mod == 1 && sub == 5)
-      SpeechSynthesis_Speak("File Select");
+      SpeechSynthesis_Speak(A11y(kA11y_FileSelect));
     else if (mod == 2)
-      SpeechSynthesis_Speak("Copy Player");
+      SpeechSynthesis_Speak(A11y(kA11y_CopyPlayer));
     else if (mod == 3)
-      SpeechSynthesis_Speak("Erase Player");
+      SpeechSynthesis_Speak(A11y(kA11y_ErasePlayer));
     else if (mod == 4)
-      SpeechSynthesis_Speak("Register Your Name");
+      SpeechSynthesis_Speak(A11y(kA11y_RegisterName));
   }
 
   if (mod == 1 && sub == 5 && cursor != g_prev_cursor) {
@@ -952,14 +792,14 @@ static void AnnounceMenuState(void) {
       if (valid == 0x55AA) {
         char name[16];
         DecodeSramName(cursor, name, sizeof(name));
-        snprintf(buf, sizeof(buf), "File %d, %s", cursor + 1, name[0] ? name : "unnamed");
+        snprintf(buf, sizeof(buf), A11y(kA11y_FmtFile), cursor + 1, name[0] ? name : A11y(kA11y_Unnamed));
       } else {
-        snprintf(buf, sizeof(buf), "File %d, empty", cursor + 1);
+        snprintf(buf, sizeof(buf), A11y(kA11y_FmtFileEmpty), cursor + 1);
       }
     } else if (cursor == 3) {
-      snprintf(buf, sizeof(buf), "Copy Player");
+      snprintf(buf, sizeof(buf), "%s", A11y(kA11y_CopyPlayer));
     } else {
-      snprintf(buf, sizeof(buf), "Erase Player");
+      snprintf(buf, sizeof(buf), "%s", A11y(kA11y_ErasePlayer));
     }
     SpeechSynthesis_Speak(buf);
   }
@@ -972,61 +812,14 @@ static void AnnounceMenuState(void) {
       if (valid == 0x55AA) {
         char name[16];
         DecodeSramName(cursor, name, sizeof(name));
-        snprintf(buf, sizeof(buf), "File %d, %s", cursor + 1, name[0] ? name : "unnamed");
+        snprintf(buf, sizeof(buf), A11y(kA11y_FmtFile), cursor + 1, name[0] ? name : A11y(kA11y_Unnamed));
       } else {
-        snprintf(buf, sizeof(buf), "File %d, empty", cursor + 1);
+        snprintf(buf, sizeof(buf), A11y(kA11y_FmtFileEmpty), cursor + 1);
       }
     } else {
-      snprintf(buf, sizeof(buf), "Cancel");
+      snprintf(buf, sizeof(buf), "%s", A11y(kA11y_Cancel));
     }
     SpeechSynthesis_Speak(buf);
-  }
-}
-
-// --- Game Over choice tracking ---
-
-static const char *kGameOverChoices[3] = {
-  "Save and Continue",
-  "Save and Quit",
-  "Continue Without Saving",
-};
-
-static void AnnounceGameOverChoice(void) {
-  uint8 mod = main_module_index;
-  if (mod != 12) {
-    g_prev_gameover_choice = 0xFF;
-    return;
-  }
-  // submodule 9 = choice selection phase
-  if (submodule_index != 9) return;
-
-  uint8 choice = subsubmodule_index;
-  if (choice != g_prev_gameover_choice && choice < 3) {
-    g_prev_gameover_choice = choice;
-    SpeechSynthesis_Speak(kGameOverChoices[choice]);
-  }
-}
-
-// --- In-game dialog choice tracking ---
-
-static const char *kSaveMenuChoices[2] = { "Continue", "Save and Quit" };
-
-static void AnnounceDialogChoice(void) {
-  uint8 mod = main_module_index;
-  // Only track during messaging module (14) — choice_in_multiselect_box can get
-  // written to during normal overworld/dungeon gameplay without an active dialog
-  if (mod != 14) {
-    g_prev_choice = 0xFF;
-    return;
-  }
-  uint8 choice = choice_in_multiselect_box;
-  if (choice != g_prev_choice && choice < 3) {
-    g_prev_choice = choice;
-    // Save menu (module 14, submodule 11): use specific names
-    if (mod == 14 && submodule_index == 11 && choice < 2)
-      SpeechSynthesis_Speak(kSaveMenuChoices[choice]);
-    else
-      Speak("Option %d", choice + 1);
   }
 }
 
@@ -1076,9 +869,9 @@ static void AnnounceNameRegistration(void) {
   int8 grid_val = kNameGrid[col + row * 32];
 
   if (grid_val == 0x5a)
-    SpeechSynthesis_Speak("Back");
+    SpeechSynthesis_Speak(A11y(kA11y_Back));
   else if (grid_val == 0x44)
-    SpeechSynthesis_Speak("Next");
+    SpeechSynthesis_Speak(A11y(kA11y_Next));
   else if (grid_val == 0x59 || grid_val == 0x6f)
     return;  // blank, don't announce
   else {
@@ -1087,7 +880,7 @@ static void AnnounceNameRegistration(void) {
     if (ch) {
       char buf[16];
       if (ch >= 'A' && ch <= 'Z')
-        Speak("Capital %c", ch);
+        Speak(A11y(kA11y_FmtCapital), ch);
       else
         Speak("%c", ch);
     }
@@ -1118,58 +911,37 @@ static void AnnounceFloorChange(void) {
   if (floor != g_prev_floor) {
     g_prev_floor = floor;
     if (floor == 0) {
-      SpeechSynthesis_Speak("Ground Floor");
+      SpeechSynthesis_Speak(A11y(kA11y_GroundFloor));
     } else if (!sign8(floor)) {
-      Speak("Floor %d", floor);
+      Speak(A11y(kA11y_FmtFloor), floor);
     } else {
-      // Basement: 0xFF = B1, 0xFE = B2, etc.
-      Speak("Basement %d", (uint8)(~floor) + 1);
+      Speak(A11y(kA11y_FmtBasement), (uint8)(~floor) + 1);
     }
   }
 }
 
 // --- Inventory tracking ---
 
-// Direct HUD slot (old-style, kNewStyleInventory=0) to item name.
-// Slot 18 is Shovel/Flute depending on game state.
-static const char *kHudSlotNames[21] = {
-  NULL,              // 0 - no item
-  "Hookshot",        // 1
-  "Boomerang",       // 2
-  "Bug Net",         // 3
-  "Bow",             // 4
-  "Quake",           // 5
-  "Mushroom",        // 6
-  "Fire Rod",        // 7
-  "Book of Mudora",  // 8
-  "Bottle",          // 9
-  "Cane of Somaria", // 10
-  "Ether",           // 11
-  "Bombs",           // 12
-  "Bombos",          // 13
-  "Ice Rod",         // 14
-  "Hammer",          // 15
-  "Lamp",            // 16
-  "Cane of Byrna",   // 17
-  "Shovel",          // 18
-  "Magic Cape",      // 19
-  "Magic Mirror",    // 20
-};
-
+// Map HUD item slot (1-20) to Y-item index for name lookup
+// hud_cur_item stores 1-based item type codes (1=Bow .. 20=Mirror).
+// Y-item index (for link_item_bow[]) is simply slot - 1.
 static const char *GetItemName(uint8 slot) {
   if (slot == 0 || slot > 20) return NULL;
-  if (slot == 18)
-    return (link_item_flute >= 2) ? "Flute" : "Shovel";
-  return kHudSlotNames[slot];
+  // Type 13 = Shovel/Flute slot; if player has flute, announce "Flute"
+  if (slot == 13 && link_item_flute >= 2)
+    return A11y(kA11y_Flute);
+  return A11yItemName(slot - 1);
 }
 
 static void AnnounceInventory(void) {
   uint8 mod = main_module_index;
-  bool menu_open = (mod == 14 && submodule_index == 0);
+  bool menu_open = (mod == 14 && submodule_index == 1);
   bool gameplay = (mod == 7 || mod == 9);
 
-  if (menu_open && !g_prev_menu_open)
+  if (menu_open && !g_prev_menu_open) {
     g_prev_hud_item = 0xFF;
+    g_prev_hud_item_x = 0xFF;
+  }
   g_prev_menu_open = menu_open;
 
   if (!menu_open && !gameplay) return;
@@ -1181,49 +953,29 @@ static void AnnounceInventory(void) {
     if (name)
       SpeechSynthesis_Speak(name);
   }
+
+  uint8 item_x = hud_cur_item_x;
+  if (item_x != g_prev_hud_item_x && item_x > 0 && item_x <= 20) {
+    g_prev_hud_item_x = item_x;
+    const char *name = GetItemName(item_x);
+    if (name)
+      SpeechSynthesis_Speak(name);
+  }
 }
 
 // --- Dungeon name announcement ---
 
-// Indexed by cur_palace_index_x2 / 2.  The game stores (kPalaceNames_index - 1) * 2,
-// so palace/2 maps as: 0=Church, 2=Castle, 3=East, 4=Desert, 5=Agahnim, 7=Water,
-// 8=Dark, 9=Mud, 10=Wood, 12=Ice, 13=Tower, 14=Town, 15=Mountain, 16=Agahnim2.
-static const char *kDungeonNames[17] = {
-  "Sanctuary",           // 0  ← Church
-  NULL,                  // 1
-  "Hyrule Castle",       // 2  ← Castle
-  "Eastern Palace",      // 3  ← East
-  "Desert Palace",       // 4  ← Desert
-  "Agahnims Tower",      // 5  ← Agahnim
-  NULL,                  // 6
-  "Swamp Palace",        // 7  ← Water
-  "Palace of Darkness",  // 8  ← Dark
-  "Misery Mire",         // 9  ← Mud
-  "Skull Woods",         // 10 ← Wood
-  NULL,                  // 11
-  "Ice Palace",          // 12 ← Ice
-  "Tower of Hera",       // 13 ← Tower
-  "Thieves Town",        // 14 ← Town
-  "Ganons Tower",        // 15 ← Mountain
-  "Agahnims Tower",      // 16 ← Agahnim2
-};
-
 static void AnnounceDungeon(void) {
   bool indoors = player_is_indoors;
-  // Read only the low byte — dungeon.c writes BYTE(cur_palace_index_x2), high byte may be stale
   uint8 palace = BYTE(cur_palace_index_x2);
 
-  // Entering a dungeon: was outdoors, now indoors with a valid palace
   if (indoors && !g_prev_indoors) {
-    uint8 idx = palace / 2;
-    if (idx < 17 && kDungeonNames[idx])
-      SpeechSynthesis_Speak(kDungeonNames[idx]);
+    const char *name = A11yDungeonName(palace / 2);
+    if (name) SpeechSynthesis_Speak(name);
   }
-  // Palace change while indoors (moving between dungeon sections)
   else if (indoors && palace != (uint8)g_prev_palace_index && g_prev_palace_index != 0xFFFF) {
-    uint8 idx = palace / 2;
-    if (idx < 17 && kDungeonNames[idx])
-      SpeechSynthesis_Speak(kDungeonNames[idx]);
+    const char *name = A11yDungeonName(palace / 2);
+    if (name) SpeechSynthesis_Speak(name);
   }
 
   g_prev_indoors = indoors;
@@ -1261,7 +1013,7 @@ static void AnnounceCollections(void) {
   // Rupees gained
   if (rupees > g_prev_rupees) {
     int gained = rupees - g_prev_rupees;
-    Speak("Plus %d rupees, %d total", gained, rupees);
+    Speak(A11y(kA11y_FmtPlusRupees), gained, rupees);
   }
 
   // Health gained
@@ -1270,22 +1022,22 @@ static void AnnounceCollections(void) {
     int half = (health % 8) >= 4;
     int max = link_health_capacity / 8;
     if (half)
-      Speak("%d and a half out of %d hearts", hearts, max);
+      Speak(A11y(kA11y_FmtHeartsHalf), hearts, max);
     else
-      Speak("%d out of %d hearts", hearts, max);
+      Speak(A11y(kA11y_FmtHearts), hearts, max);
   }
 
   // Arrows gained
   if (arrows > g_prev_arrows)
-    Speak("%d arrows", arrows);
+    Speak(A11y(kA11y_FmtArrows), arrows);
 
   // Bombs gained
   if (bombs > g_prev_bombs)
-    Speak("%d bombs", bombs);
+    Speak(A11y(kA11y_FmtBombs), bombs);
 
   // Keys gained
   if (keys > g_prev_keys)
-    Speak("Got key, %d keys", keys);
+    Speak(A11y(kA11y_FmtGotKey), keys);
 
   g_prev_rupees = rupees;
   g_prev_health = health;
@@ -1304,7 +1056,7 @@ static void AnnounceAreaChange(void) {
   uint16 area = overworld_area_index;
   if (area != g_prev_ow_area) {
     if (g_prev_ow_area != 0xFFFF) {
-      const char *name = GetAreaName(area);
+      const char *name = A11yAreaName(area);
       if (name) SpeechSynthesis_Speak(name);
     }
     g_prev_ow_area = area;
@@ -1320,7 +1072,7 @@ static void AnnounceDirectionChange(void) {
   uint8 dir = link_direction_facing;
   if (dir != g_prev_facing) {
     g_prev_facing = dir;
-    const char *name = GetDirectionName(dir);
+    const char *name = GetDirectionName(dir, false);
     if (name) SpeechSynthesis_Speak(name);
   }
 }
@@ -1342,9 +1094,114 @@ static void AnnounceNearbyEntrance(void) {
   g_prev_nearest_entrance_idx = announce_idx;
   if (announce_idx >= 0) {
     uint8 eid = kOverworld_Entrance_Id[announce_idx];
-    const char *name = GetEntranceName(eid);
+    const char *name = A11yEntranceName(eid);
     if (name) SpeechSynthesis_Speak(name);
   }
+}
+
+// --- Overworld map markers ---
+
+// Pendant marker slot → dungeon index (palace_index / 2)
+static const int kPendantSlotToDungeon[3] = {3, 4, 13};  // Eastern, Desert, Hera
+static const uint8 kPendantBitMask_a11y[3] = {4, 1, 2};
+
+// Crystal marker slot → dungeon index (palace_index / 2)
+static const int kCrystalSlotToDungeon[7] = {8, 7, 10, 14, 12, 9, 11};
+static const uint8 kCrystalBitMask_a11y[7] = {2, 0x40, 8, 0x20, 1, 4, 0x10};
+
+static void AnnounceOverworldMap(void) {
+  uint8 mod = main_module_index;
+  bool map_active = (mod == 14 && submodule_index == 7 && overworld_map_state >= 5);
+
+  if (map_active && !g_prev_ow_map_active) {
+    // Map just opened — announce summary
+    char buf[256];
+    int pos = 0;
+    bool dark = is_in_dark_world != 0;
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "%s ",
+                    dark ? A11y(kA11y_DarkWorldMap) : A11y(kA11y_LightWorldMap));
+
+    uint8 k = savegame_map_icons_indicator;
+
+    if (k == 3 && !dark) {
+      // Pendant mode — list uncollected pendant dungeons
+      for (int i = 0; i < 3; i++) {
+        if (!(link_which_pendants & kPendantBitMask_a11y[i])) {
+          const char *name = A11yDungeonName(kPendantSlotToDungeon[i]);
+          if (name && pos < (int)sizeof(buf) - 2)
+            pos += snprintf(buf + pos, sizeof(buf) - pos, "%s. ", name);
+        }
+      }
+    } else if (k == 7 && dark) {
+      // Crystal mode — list uncollected crystal dungeons
+      for (int i = 0; i < 7; i++) {
+        if (!(link_has_crystals & kCrystalBitMask_a11y[i])) {
+          const char *name = A11yDungeonName(kCrystalSlotToDungeon[i]);
+          if (name && pos < (int)sizeof(buf) - 2)
+            pos += snprintf(buf + pos, sizeof(buf) - pos, "%s. ", name);
+        }
+      }
+    }
+
+    SpeechSynthesis_Speak(buf);
+  }
+  g_prev_ow_map_active = map_active;
+}
+
+// --- Flute destination ---
+
+static void AnnounceFluteDestination(void) {
+  uint8 mod = main_module_index;
+  bool flute_active = (mod == 14 && submodule_index == 10);
+
+  if (flute_active) {
+    uint8 sel = birdtravel_var1[0] & 7;
+    if (!g_prev_flute_active || sel != g_prev_flute_sel) {
+      g_prev_flute_sel = sel;
+      const char *name = A11yFluteName(sel);
+      if (name) SpeechSynthesis_Speak(name);
+    }
+  }
+  g_prev_flute_active = flute_active;
+}
+
+// --- Dungeon map floor ---
+
+static void AnnounceDungeonMap(void) {
+  uint8 mod = main_module_index;
+  bool dmap_active = (mod == 14 && submodule_index == 3);
+
+  if (dmap_active && !g_prev_dung_map_active) {
+    // Dungeon map just opened — announce dungeon name + current floor
+    char buf[128];
+    const char *dname = A11yDungeonName(BYTE(cur_palace_index_x2) / 2);
+    int8 floor = (int8)dungmap_cur_floor;
+    if (dname) {
+      if (floor == 0)
+        snprintf(buf, sizeof(buf), "%s %s. %s", A11y(kA11y_DungeonMap), dname, A11y(kA11y_GroundFloor));
+      else if (floor > 0)
+        snprintf(buf, sizeof(buf), "%s %s. " , A11y(kA11y_DungeonMap), dname);
+      else
+        snprintf(buf, sizeof(buf), "%s %s. ", A11y(kA11y_DungeonMap), dname);
+      SpeechSynthesis_Speak(buf);
+    }
+  } else if (dmap_active) {
+    // Track floor changes while dungeon map is open
+    uint16 floor = dungmap_cur_floor;
+    if (floor != g_prev_dungmap_floor) {
+      char buf[64];
+      int8 f = (int8)(uint8)floor;
+      if (f == 0)
+        SpeechSynthesis_Speak(A11y(kA11y_GroundFloor));
+      else if (f > 0)
+        snprintf(buf, sizeof(buf), A11y(kA11y_FmtFloor), f), SpeechSynthesis_Speak(buf);
+      else
+        snprintf(buf, sizeof(buf), A11y(kA11y_FmtBasement), (uint8)(~f) + 1), SpeechSynthesis_Speak(buf);
+    }
+  }
+  if (dmap_active)
+    g_prev_dungmap_floor = dungmap_cur_floor;
+  g_prev_dung_map_active = dmap_active;
 }
 #endif  // __APPLE__
 
@@ -1356,14 +1213,15 @@ void SpatialAudio_ScanFrame(void) {
 
 #if defined(__APPLE__) || defined(_WIN32)
   AnnounceMenuState();
-  AnnounceGameOverChoice();
-  AnnounceDialogChoice();
   AnnounceInventory();
   AnnounceDungeon();
   AnnounceFloorChange();
   AnnounceCollections();
   AnnounceNameRegistration();
   AnnounceAreaChange();
+  AnnounceOverworldMap();
+  AnnounceFluteDestination();
+  AnnounceDungeonMap();
   // Direction available via 'i' key but not auto-announced (too noisy)
 #endif
 
@@ -2573,33 +2431,6 @@ void SpatialAudio_MixAudio(int16 *buf, int samples, int channels) {
 
 #define LEGEND_COUNT 24
 
-static const char * const kLegendNames[LEGEND_COUNT] = {
-  "Wall ahead",
-  "Wall behind",
-  "Wall right",
-  "Wall left",
-  "Passage opening",
-  "Hole or pit",
-  "Ledge, one way drop",
-  "Deep water",
-  "Hazard, spikes",
-  "Conveyor belt",
-  "Enemy",
-  "Friendly character",
-  "Chest",
-  "Liftable object",
-  "Door or entrance",
-  "Stairs going up",
-  "Stairs going down",
-  "Grass terrain",
-  "Shallow water terrain",
-  "Ice floor",
-  "Sword range",
-  "Danger zone",
-  "Alignment sonar",
-  "Movement blocked",
-};
-
 bool SpatialAudio_IsLegendActive(void) {
   return g_legend_active;
 }
@@ -2621,12 +2452,12 @@ void SpatialAudio_ToggleLegend(void) {
     // Clear spatial cues so they don't play during legend
     memset(g_cue_snapshot, 0, sizeof(g_cue_snapshot));
 #if defined(__APPLE__) || defined(_WIN32)
-    SpeechSynthesis_Speak("Sound Legend. Use Up and Down arrows to browse.");
+    SpeechSynthesis_Speak(A11y(kA11y_LegendOpen));
 #endif
   } else {
     g_legend_demo_pos = -1;
 #if defined(__APPLE__) || defined(_WIN32)
-    SpeechSynthesis_Speak("Sound Legend closed");
+    SpeechSynthesis_Speak(A11y(kA11y_LegendClosed));
 #endif
   }
 }
@@ -2637,7 +2468,7 @@ void SpatialAudio_LegendNavigate(int dir) {
   if (g_legend_index < 0) g_legend_index = LEGEND_COUNT - 1;
   if (g_legend_index >= LEGEND_COUNT) g_legend_index = 0;
 #if defined(__APPLE__) || defined(_WIN32)
-  SpeechSynthesis_Speak(kLegendNames[g_legend_index]);
+  SpeechSynthesis_Speak(A11yLegendName(g_legend_index));
 #endif
   LegendStartDemo(g_legend_index);
 }
@@ -2654,13 +2485,6 @@ enum {
   kTopMenu_Count,
 };
 
-static const char * const kTopMenuNames[kTopMenu_Count] = {
-  "Speech Rate",
-  "Speech Voice",
-  "Speech Volume",
-  "Sound Setup",
-  "Save Options",
-};
 
 // Sound setup submenu items
 enum {
@@ -2683,24 +2507,6 @@ enum {
   kSoundSetup_Count,
 };
 
-static const char * const kSoundSetupNames[kSoundSetup_Count] = {
-  "Walls volume",
-  "Holes and Pits volume",
-  "Enemy volume",
-  "NPC volume",
-  "Chest volume",
-  "Liftable volume",
-  "Door volume",
-  "Stairs volume",
-  "Ledge volume",
-  "Deep Water volume",
-  "Hazard volume",
-  "Conveyor volume",
-  "Terrain volume",
-  "Combat volume",
-  "Detection Range",
-  "Back",
-};
 
 bool SpatialAudio_IsOptionsActive(void) {
   return g_options_active;
@@ -2710,56 +2516,54 @@ bool SpatialAudio_IsOptionsActive(void) {
 static void OptionsAnnounceCurrentItem(void) {
   char buf[128];
   if (g_options_menu == 0) {
-    // Top-level menu
     switch (g_options_index) {
     case kTopMenu_SpeechRate: {
       int pct = (int)(SpeechSynthesis_GetRate() * 200);
-      snprintf(buf, sizeof(buf), "Speech Rate, %d percent", pct);
+      snprintf(buf, sizeof(buf), A11y(kA11y_FmtSpeechRate), pct);
       SpeechSynthesis_Speak(buf);
       break;
     }
     case kTopMenu_SpeechVoice: {
       int vi = SpeechSynthesis_GetCurrentVoiceIndex();
       const char *name = SpeechSynthesis_GetVoiceName(vi);
-      snprintf(buf, sizeof(buf), "Speech Voice, %s", name ? name : "default");
+      snprintf(buf, sizeof(buf), A11y(kA11y_FmtSpeechVoice), name ? name : A11y(kA11y_FmtDefault));
       SpeechSynthesis_Speak(buf);
       break;
     }
     case kTopMenu_SpeechVolume: {
       int pct = (int)(SpeechSynthesis_GetVolume() * 100);
-      snprintf(buf, sizeof(buf), "Speech Volume, %d percent", pct);
+      snprintf(buf, sizeof(buf), A11y(kA11y_FmtSpeechVolume), pct);
       SpeechSynthesis_Speak(buf);
       break;
     }
-    case kTopMenu_SoundSetup:
-      SpeechSynthesis_Speak("Sound Setup");
-      break;
-    case kTopMenu_SaveOptions:
-      SpeechSynthesis_Speak("Save Options");
+    default: {
+      const char *name = A11yTopMenuName(g_options_index);
+      if (name) SpeechSynthesis_Speak(name);
       break;
     }
+    }
   } else if (g_options_menu == 1) {
-    // Voice submenu
     const char *name = SpeechSynthesis_GetVoiceName(g_options_index);
     int cur = SpeechSynthesis_GetCurrentVoiceIndex();
     if (name) {
       if (g_options_index == cur)
-        snprintf(buf, sizeof(buf), "%s, selected", name);
+        snprintf(buf, sizeof(buf), A11y(kA11y_FmtSelected), name);
       else
         snprintf(buf, sizeof(buf), "%s", name);
       SpeechSynthesis_Speak(buf);
     }
   } else if (g_options_menu == 2) {
-    // Sound setup submenu
     if (g_options_index < kCueGroup_Count) {
-      snprintf(buf, sizeof(buf), "%s, %d percent",
-               kSoundSetupNames[g_options_index], g_cue_group_volume[g_options_index]);
+      const char *name = A11ySoundSetupName(g_options_index);
+      char pct[32];
+      snprintf(pct, sizeof(pct), A11y(kA11y_FmtPercent), g_cue_group_volume[g_options_index]);
+      snprintf(buf, sizeof(buf), "%s, %s", name ? name : "", pct);
       SpeechSynthesis_Speak(buf);
     } else if (g_options_index == kSoundSetup_DetectionRange) {
-      snprintf(buf, sizeof(buf), "Detection Range, %d", g_scan_range);
+      snprintf(buf, sizeof(buf), A11y(kA11y_FmtDetectionRange), g_scan_range);
       SpeechSynthesis_Speak(buf);
     } else if (g_options_index == kSoundSetup_Back) {
-      SpeechSynthesis_Speak("Back");
+      SpeechSynthesis_Speak(A11y(kA11y_Back));
     }
   }
 }
@@ -2774,11 +2578,11 @@ void SpatialAudio_ToggleOptions(void) {
     g_options_menu = 0;
     memset(g_cue_snapshot, 0, sizeof(g_cue_snapshot));
 #if defined(__APPLE__) || defined(_WIN32)
-    SpeechSynthesis_Speak("Accessibility Options. Use Up and Down to navigate.");
+    SpeechSynthesis_Speak(A11y(kA11y_OptionsOpen));
 #endif
   } else {
 #if defined(__APPLE__) || defined(_WIN32)
-    SpeechSynthesis_Speak("Options closed");
+    SpeechSynthesis_Speak(A11y(kA11y_OptionsClosed));
 #endif
   }
 }
@@ -2816,7 +2620,7 @@ void SpatialAudio_OptionsAdjust(int dir) {
       SpeechSynthesis_SetRate(rate);
       int pct = (int)(SpeechSynthesis_GetRate() * 200);
 #if defined(__APPLE__) || defined(_WIN32)
-      snprintf(buf, sizeof(buf), "%d percent", pct);
+      snprintf(buf, sizeof(buf), A11y(kA11y_FmtPercent), pct);
       SpeechSynthesis_Speak(buf);
 #endif
       break;
@@ -2826,7 +2630,7 @@ void SpatialAudio_OptionsAdjust(int dir) {
       SpeechSynthesis_SetVolume(vol);
       int pct = (int)(SpeechSynthesis_GetVolume() * 100);
 #if defined(__APPLE__) || defined(_WIN32)
-      snprintf(buf, sizeof(buf), "%d percent", pct);
+      snprintf(buf, sizeof(buf), A11y(kA11y_FmtPercent), pct);
       SpeechSynthesis_Speak(buf);
 #endif
       break;
@@ -2842,7 +2646,7 @@ void SpatialAudio_OptionsAdjust(int dir) {
       if (vol > 100) vol = 100;
       g_cue_group_volume[g_options_index] = vol;
 #if defined(__APPLE__) || defined(_WIN32)
-      snprintf(buf, sizeof(buf), "%d percent", vol);
+      snprintf(buf, sizeof(buf), A11y(kA11y_FmtPercent), vol);
       SpeechSynthesis_Speak(buf);
 #endif
     } else if (g_options_index == kSoundSetup_DetectionRange) {
@@ -2869,7 +2673,7 @@ void SpatialAudio_OptionsSelect(void) {
         g_options_menu = 1;
         g_options_index = SpeechSynthesis_GetCurrentVoiceIndex();
 #if defined(__APPLE__) || defined(_WIN32)
-        SpeechSynthesis_Speak("Voice selection. Use Up and Down, Enter to select, Escape to go back.");
+        SpeechSynthesis_Speak(A11y(kA11y_VoiceSubmenuOpen));
 #endif
       }
       break;
@@ -2878,13 +2682,13 @@ void SpatialAudio_OptionsSelect(void) {
       g_options_menu = 2;
       g_options_index = 0;
 #if defined(__APPLE__) || defined(_WIN32)
-      SpeechSynthesis_Speak("Sound Setup. Use Up and Down to navigate, Left and Right to adjust.");
+      SpeechSynthesis_Speak(A11y(kA11y_SoundSetupOpen));
 #endif
       break;
     case kTopMenu_SaveOptions:
       SpatialAudio_SaveSettings();
 #if defined(__APPLE__) || defined(_WIN32)
-      SpeechSynthesis_Speak("Options saved");
+      SpeechSynthesis_Speak(A11y(kA11y_OptionsSaved));
 #endif
       break;
     default:
@@ -2897,7 +2701,7 @@ void SpatialAudio_OptionsSelect(void) {
     {
       char buf[128];
       const char *name = SpeechSynthesis_GetVoiceName(g_options_index);
-      snprintf(buf, sizeof(buf), "%s selected", name ? name : "voice");
+      snprintf(buf, sizeof(buf), A11y(kA11y_FmtSelected), name ? name : A11y(kA11y_FmtDefault));
       SpeechSynthesis_Speak(buf);
     }
 #endif

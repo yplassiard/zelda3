@@ -7,6 +7,8 @@ void SpeechSynthesis_SpeakQueued(const char *text);
 void SpeechSynthesis_AdjustRate(int direction);
 void SpeechSynthesis_Shutdown(void);
 
+void SpeechSynthesis_SetLanguage(const char *lang_prefix);
+
 // Voice/volume API stubs — NVDA controls its own settings
 void SpeechSynthesis_SetVolume(float volume);
 float SpeechSynthesis_GetVolume(void);

@@ -7,6 +7,9 @@ void SpeechSynthesis_SpeakQueued(const char *text);
 void SpeechSynthesis_AdjustRate(int direction);
 void SpeechSynthesis_Shutdown(void);
 
+// Language — re-enumerates voices for the given language prefix (e.g. "fr", "de")
+void SpeechSynthesis_SetLanguage(const char *lang_prefix);
+
 // Voice/volume API for accessibility options
 void SpeechSynthesis_SetVolume(float volume);  // 0.0-1.0
 float SpeechSynthesis_GetVolume(void);
