@@ -694,6 +694,9 @@ void SpatialAudio_SpeakLocation(void) {
 static int ClassifyTile(uint8 tile) {
   if (tile >= 0x01 && tile <= 0x03) return TILE_CLASS_WALL;
   if (tile == 0x26 || tile == 0x43)  return TILE_CLASS_WALL;
+  if (tile == 0x27)                  return TILE_CLASS_WALL;  // hookshottable walls
+  if (tile == 0x42)                  return TILE_CLASS_WALL;  // gravestones (outdoor)
+  if (tile == 0x57)                  return TILE_CLASS_WALL;  // bonk rocks
   if (tile == 0x20)                  return kSpatialCue_HoleL;  // placeholder, split by dx at scan time
   if (tile >= 0xB0 && tile <= 0xBD)  return kSpatialCue_HoleL;
   if (tile >= 0x50 && tile <= 0x56)  return kSpatialCue_Liftable;
@@ -720,6 +723,17 @@ static int ClassifyTile(uint8 tile) {
   // Conveyor belts: 0x68-0x6B
   if (tile >= 0x68 && tile <= 0x6B)  return kSpatialCue_Conveyor;
   return -1;
+}
+
+// Tiles that block movement and form corridor boundaries but already have
+// their own audio cues (water tremolo, ledge sweep, liftable tone).
+// These feed the passage detection beam without becoming wall cues.
+static bool IsBeamOpaque(int cat, uint8 tile, bool indoors) {
+  if (cat == kSpatialCue_DeepWater) return true;
+  if (!indoors && tile == 0x0B) return true;  // outdoor deep water variant
+  if (cat == kSpatialCue_Ledge) return true;
+  if (cat == kSpatialCue_Liftable) return true;
+  return false;
 }
 
 #if defined(__APPLE__) || defined(_WIN32)
@@ -1367,6 +1381,18 @@ void SpatialAudio_ScanFrame(void) {
         if (dy > 0 && abs_dx <= 16 &&  dy < beam_dist[1]) beam_dist[1] = dy;   // South
         if (dx > 0 && abs_dy <= 16 &&  dx < beam_dist[2]) beam_dist[2] = dx;   // East
         if (dx < 0 && abs_dy <= 16 && -dx < beam_dist[3]) beam_dist[3] = -dx;  // West
+      }
+
+      // Non-wall impassable tiles also feed the passage detection beam
+      if (IsBeamOpaque(cat, tile, indoors)) {
+        int abs_dx = dx < 0 ? -dx : dx;
+        int abs_dy = dy < 0 ? -dy : dy;
+        if (abs_dx > 0 || abs_dy > 0) {
+          if (dy < 0 && abs_dx <= 16 && -dy < beam_dist[0]) beam_dist[0] = -dy;
+          if (dy > 0 && abs_dx <= 16 &&  dy < beam_dist[1]) beam_dist[1] = dy;
+          if (dx > 0 && abs_dy <= 16 &&  dx < beam_dist[2]) beam_dist[2] = dx;
+          if (dx < 0 && abs_dy <= 16 && -dx < beam_dist[3]) beam_dist[3] = -dx;
+        }
       }
 
       // Split holes into left/right by dx relative to Link
