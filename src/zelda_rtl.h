@@ -44,6 +44,8 @@ void zelda_ppu_write_word(uint32_t adr, uint16_t val);
 // 512x480 32-bit pixels. Returns true if we instead draw 1024x960
 void HdmaSetup(uint32 addr6, uint32 addr7, uint8 transfer_unit, uint8 reg6, uint8 reg7, uint8 indirect_bank);
 
+const char *GetSaveDir(void);
+
 void ZeldaInitialize();
 void ZeldaReset(bool preserve_sram);
 void ZeldaDrawPpuFrame(uint8 *pixel_buffer, size_t pitch, uint32 render_flags);

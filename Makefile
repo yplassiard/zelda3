@@ -9,22 +9,23 @@ CFLAGS:=${CFLAGS} $(shell sdl2-config --cflags) -DSYSTEM_VOLUME_MIXER_AVAILABLE=
 ifeq (${OS},Windows_NT)
     WINDRES:=windres
     RES:=zelda3.res
-    WIN_SRCS:=src/platform/win32/speechsynthesis.c
+    WIN_SRCS:=src/platform/win32/speechsynthesis.c src/platform/win32/filepicker.c
     WIN_OBJS:=$(WIN_SRCS:%.c=%.o)
-    SDLFLAGS:=-Wl,-Bstatic $(shell sdl2-config --static-libs)
+    SDLFLAGS:=-Wl,-Bstatic $(shell sdl2-config --static-libs) -lcomdlg32
 else
+    SRCS+=$(wildcard src/platform/linux/*.c)
     SDLFLAGS:=$(shell sdl2-config --libs) -lm
     UNAME_S:=$(shell uname -s)
     ifeq ($(UNAME_S),Darwin)
-        OBJC_SRCS:=src/platform/macos/speechsynthesis.m
+        OBJC_SRCS:=src/platform/macos/speechsynthesis.m src/platform/macos/filepicker.m
         OBJC_OBJS:=$(OBJC_SRCS:%.m=%.o)
-        SDLFLAGS+=-framework AVFoundation -framework Foundation -lobjc
+        SDLFLAGS+=-framework AVFoundation -framework Foundation -framework Cocoa -framework UniformTypeIdentifiers -lobjc
     endif
 endif
 
 .PHONY: all clean clean_obj clean_gen
 
-all: $(TARGET_EXEC) zelda3_assets.dat
+all: $(TARGET_EXEC)
 $(TARGET_EXEC): $(OBJS) $(OBJC_OBJS) $(WIN_OBJS) $(RES)
 	$(CC) $^ -o $@ $(LDFLAGS) $(SDLFLAGS)
 %.o : %.c

@@ -792,13 +792,13 @@ static const char *const kReferenceSaves[] = {
 };
 
 void SaveLoadSlot(int cmd, int which) {
-  char name[128];
+  char name[512];
   if (which & 256) {
     if (cmd == kSaveLoad_Save)
       return;
-    sprintf(name, "saves/ref/%s", kReferenceSaves[which - 256]);
+    snprintf(name, sizeof(name), "%s/ref/%s", GetSaveDir(), kReferenceSaves[which - 256]);
   } else {
-    sprintf(name, "saves/save%d.sav", which);
+    snprintf(name, sizeof(name), "%s/save%d.sav", GetSaveDir(), which);
   }
   FILE *f = fopen(name, cmd != kSaveLoad_Save ? "rb" : "wb");
   if (f) {
@@ -869,22 +869,27 @@ void PatchCommand(char c) {
 
 
 void ZeldaReadSram() {
-  FILE *f = fopen("saves/sram.dat", "rb");
+  char path[512];
+  snprintf(path, sizeof(path), "%s/sram.dat", GetSaveDir());
+  FILE *f = fopen(path, "rb");
   if (f) {
     if (fread(g_zenv.sram, 1, 8192, f) != 8192)
-      fprintf(stderr, "Error reading saves/sram.dat\n");
+      fprintf(stderr, "Error reading %s\n", path);
     fclose(f);
     EmuSynchronizeWholeState();
   }
 }
 
 void ZeldaWriteSram() {
-  rename("saves/sram.dat", "saves/sram.bak");
-  FILE *f = fopen("saves/sram.dat", "wb");
+  char path[512], bak[512];
+  snprintf(path, sizeof(path), "%s/sram.dat", GetSaveDir());
+  snprintf(bak, sizeof(bak), "%s/sram.bak", GetSaveDir());
+  rename(path, bak);
+  FILE *f = fopen(path, "wb");
   if (f) {
     fwrite(g_zenv.sram, 1, 8192, f);
     fclose(f);
   } else {
-    fprintf(stderr, "Unable to write saves/sram.dat\n");
+    fprintf(stderr, "Unable to write %s\n", path);
   }
 }

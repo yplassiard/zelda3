@@ -13,6 +13,7 @@
 #include <unistd.h>
 #endif
 
+#include <limits.h>
 #include "snes/ppu.h"
 
 #include "types.h"
@@ -29,8 +30,14 @@
 #include "accessibility.h"
 #include "a11y_strings.h"
 #include "spatial_audio.h"
+#include "setup_screen.h"
+#include "filepicker.h"
+#include "asset_extract.h"
 
 static bool g_run_without_emu = 0;
+
+// Application support / save directory (initialized early for setup screen)
+static char g_save_dir[PATH_MAX];
 
 // Forwards
 static bool LoadRom(const char *filename);
@@ -278,6 +285,7 @@ static const struct RendererFuncs kSdlRendererFuncs  = {
 };
 
 void OpenGLRenderer_Create(struct RendererFuncs *funcs, bool use_opengl_es);
+static void InitSaveDir(void);
 
 #undef main
 int main(int argc, char** argv) {
@@ -302,6 +310,88 @@ int main(int argc, char** argv) {
     }
   }
   ParseConfigFile(config_file);
+
+  // audio_freq: Use common sampling rates (see user config file. values higher than 48000 are not supported.)
+  if (g_config.audio_freq < 11025 || g_config.audio_freq > 48000)
+    g_config.audio_freq = kDefaultFreq;
+
+  // Currently, the SPC/DSP implementation only supports up to stereo.
+  if (g_config.audio_channels < 1 || g_config.audio_channels > 2)
+    g_config.audio_channels = kDefaultChannels;
+
+  // audio_samples: power of 2
+  if (g_config.audio_samples <= 0 || ((g_config.audio_samples & (g_config.audio_samples - 1)) != 0))
+    g_config.audio_samples = kDefaultSamples;
+
+  // set up SDL early so the setup screen can use it
+  if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
+    printf("Failed to init SDL: %s\n", SDL_GetError());
+    return 1;
+  }
+
+  // Init save/app support directory early — LoadAssets checks it
+  InitSaveDir();
+
+  // Init accessibility (needed for setup screen TTS)
+  A11yStrings_Init(g_config.language);
+  Accessibility_Init();
+  if (g_config.language && g_config.language[0])
+    Accessibility_SetLanguage(g_config.language);
+  SpatialAudio_Init(g_config.audio_freq ? g_config.audio_freq : kDefaultFreq);
+
+  // Load persisted accessibility state from zelda3_a11y.ini
+  {
+    FILE *af = fopen("zelda3_a11y.ini", "r");
+    if (af) {
+      char aline[256];
+      while (fgets(aline, sizeof(aline), af)) {
+        if (strncmp(aline, "accessibility_enabled=", 22) == 0)
+          if (aline[22] == '1') enable_accessibility = true;
+      }
+      fclose(af);
+    }
+  }
+
+  if (enable_accessibility)
+    SpatialAudio_Enable();
+
+  // ── Setup screen: show if no assets found ──
+  if (SetupScreen_IsNeeded(g_save_dir)) {
+    // Create a temporary window+renderer for the setup screen
+    SDL_Window *setup_win = SDL_CreateWindow("Zelda 3 Setup",
+        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        512, 448, SDL_WINDOW_RESIZABLE);
+    if (!setup_win) {
+      printf("Failed to create setup window: %s\n", SDL_GetError());
+      return 1;
+    }
+    SDL_Renderer *setup_ren = SDL_CreateRenderer(setup_win, -1,
+        SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    if (!setup_ren) {
+      setup_ren = SDL_CreateRenderer(setup_win, -1, SDL_RENDERER_SOFTWARE);
+    }
+    if (!setup_ren) {
+      printf("Failed to create setup renderer: %s\n", SDL_GetError());
+      SDL_DestroyWindow(setup_win);
+      return 1;
+    }
+    SDL_RenderSetLogicalSize(setup_ren, 256, 224);
+
+    bool setup_ok = SetupScreen_Run(setup_win, setup_ren, g_save_dir);
+    if (SetupScreen_GetAccessibility())
+      enable_accessibility = true;
+    SDL_DestroyRenderer(setup_ren);
+    SDL_DestroyWindow(setup_win);
+
+    if (!setup_ok) {
+      SDL_Quit();
+      return 0;  // user cancelled
+    }
+    // Enable accessibility if user toggled it on in setup screen
+    if (enable_accessibility)
+      SpatialAudio_Enable();
+  }
+
   LoadAssets();
   LoadLinkGraphics();
 
@@ -309,7 +399,6 @@ int main(int argc, char** argv) {
   g_zenv.ppu->extraLeftRight = UintMin(g_config.extended_aspect_ratio, kPpuExtraLeftRight);
   g_snes_width = (g_config.extended_aspect_ratio * 2 + 256);
   g_snes_height = (g_config.extend_y ? 240 : 224);
-
 
   // Delay actually setting those features in ram until any snapshots finish playing.
   g_wanted_zelda_features = g_config.features0;
@@ -328,32 +417,6 @@ int main(int argc, char** argv) {
 
   // Window scale (1=100%, 2=200%, 3=300%, etc.)
   g_current_window_scale = (g_config.window_scale == 0) ? 2 : IntMin(g_config.window_scale, kMaxWindowScale);
-
-  // audio_freq: Use common sampling rates (see user config file. values higher than 48000 are not supported.)
-  if (g_config.audio_freq < 11025 || g_config.audio_freq > 48000)
-    g_config.audio_freq = kDefaultFreq;
-
-  // Currently, the SPC/DSP implementation only supports up to stereo.
-  if (g_config.audio_channels < 1 || g_config.audio_channels > 2)
-    g_config.audio_channels = kDefaultChannels;
-
-  // audio_samples: power of 2
-  if (g_config.audio_samples <= 0 || ((g_config.audio_samples & (g_config.audio_samples - 1)) != 0))
-    g_config.audio_samples = kDefaultSamples;
-
-  // set up SDL
-  if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
-    printf("Failed to init SDL: %s\n", SDL_GetError());
-    return 1;
-  }
-
-  A11yStrings_Init(g_config.language);
-  Accessibility_Init();
-  if (g_config.language && g_config.language[0])
-    Accessibility_SetLanguage(g_config.language);
-  SpatialAudio_Init(g_config.audio_freq ? g_config.audio_freq : kDefaultFreq);
-  if (enable_accessibility)
-    SpatialAudio_Enable();
 
   bool custom_size  = g_config.window_width != 0 && g_config.window_height != 0;
   int window_width  = custom_size ? g_config.window_width  : g_current_window_scale * g_snes_width;
@@ -401,12 +464,6 @@ int main(int argc, char** argv) {
 
   if (argc >= 1 && !g_run_without_emu)
     LoadRom(argv[0]);
-
-#if defined(_WIN32)
-  _mkdir("saves");
-#else
-  mkdir("saves", 0755);
-#endif
 
   ZeldaReadSram();
 
@@ -477,6 +534,26 @@ int main(int argc, char** argv) {
     // Freeze game while sound legend or options menu is open
     if (SpatialAudio_IsLegendActive() || SpatialAudio_IsOptionsActive()) {
       SDL_Delay(16);
+      continue;
+    }
+
+    // Re-enter setup screen (Alt+Ctrl+S)
+    if (SetupScreen_ShouldReenter()) {
+      SDL_Window *setup_win = SDL_CreateWindow("Zelda 3 Setup",
+          SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+          512, 448, SDL_WINDOW_RESIZABLE);
+      if (setup_win) {
+        SDL_Renderer *setup_ren = SDL_CreateRenderer(setup_win, -1,
+            SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+        if (!setup_ren)
+          setup_ren = SDL_CreateRenderer(setup_win, -1, SDL_RENDERER_SOFTWARE);
+        if (setup_ren) {
+          SDL_RenderSetLogicalSize(setup_ren, 256, 224);
+          SetupScreen_Run(setup_win, setup_ren, g_save_dir);
+          SDL_DestroyRenderer(setup_ren);
+        }
+        SDL_DestroyWindow(setup_win);
+      }
       continue;
     }
 
@@ -722,6 +799,9 @@ static void HandleCommand_Locked(uint32 j, bool pressed) {
     case kKeys_AccessibilityOptions:
       SpatialAudio_ToggleOptions();
       break;
+    case kKeys_SetupScreen:
+      if (pressed) SetupScreen_RequestReenter();
+      break;
     default: assert(0);
     }
   }
@@ -902,7 +982,19 @@ uint32 g_asset_sizes[kNumberOfAssets];
 
 static void LoadAssets() {
   size_t length = 0;
-  uint8 *data = ReadWholeFile("zelda3_assets.dat", &length);
+  uint8 *data = NULL;
+
+  // Try app support directory first
+  if (g_save_dir[0]) {
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "%s/zelda3_assets.dat", g_save_dir);
+    data = ReadWholeFile(path, &length);
+  }
+
+  // Fall back to current directory
+  if (!data)
+    data = ReadWholeFile("zelda3_assets.dat", &length);
+
   if (!data) {
     size_t bps_length, bps_src_length;
     uint8 *bps, *bps_src;
@@ -944,6 +1036,47 @@ static void LoadAssets() {
 }
 
 // Go some steps up and find zelda3.ini
+// Save directory: ~/Library/Application Support/Zelda3 on macOS, "saves" subdir elsewhere
+const char *GetSaveDir(void) {
+  return g_save_dir;
+}
+
+static void InitSaveDir(void) {
+#ifdef __APPLE__
+  const char *home = getenv("HOME");
+  if (home) {
+    snprintf(g_save_dir, sizeof(g_save_dir), "%s/Library/Application Support/Zelda3", home);
+    mkdir(g_save_dir, 0755);
+  }
+#elif defined(_WIN32)
+  const char *appdata = getenv("APPDATA");
+  if (appdata) {
+    snprintf(g_save_dir, sizeof(g_save_dir), "%s\\Zelda3", appdata);
+    _mkdir(g_save_dir);
+  }
+#else
+  const char *xdg = getenv("XDG_DATA_HOME");
+  if (xdg) {
+    snprintf(g_save_dir, sizeof(g_save_dir), "%s/Zelda3", xdg);
+  } else {
+    const char *home = getenv("HOME");
+    if (home)
+      snprintf(g_save_dir, sizeof(g_save_dir), "%s/.local/share/Zelda3", home);
+  }
+  if (g_save_dir[0])
+    mkdir(g_save_dir, 0755);
+#endif
+  // Fallback to local directory
+  if (!g_save_dir[0]) {
+    snprintf(g_save_dir, sizeof(g_save_dir), "saves");
+#ifdef _WIN32
+    _mkdir(g_save_dir);
+#else
+    mkdir(g_save_dir, 0755);
+#endif
+  }
+}
+
 static void SwitchDirectory() {
   char buf[4096];
   if (!getcwd(buf, sizeof(buf) - 32))
