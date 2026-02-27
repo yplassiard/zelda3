@@ -387,6 +387,15 @@ int main(int argc, char** argv) {
       SDL_Quit();
       return 0;  // user cancelled
     }
+    // Re-parse config to pick up Language and Controls written by setup screen
+    ResetKeymap();
+    ParseConfigFile(config_file);
+
+    // Re-init language-dependent systems with the new language
+    A11yStrings_Init(g_config.language);
+    if (g_config.language && g_config.language[0])
+      Accessibility_SetLanguage(g_config.language);
+
     // Enable accessibility if user toggled it on in setup screen
     if (enable_accessibility)
       SpatialAudio_Enable();

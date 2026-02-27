@@ -71,6 +71,9 @@ static int g_legend_index;      // cursor in legend menu
 // ── Pixel buffer ──
 static uint32_t g_fb[SETUP_W * SETUP_H];
 
+// Forward declarations
+static void SaveGameConfig(void);
+
 // ── Localized menu strings ──
 typedef struct {
   const char *game_rom;          // "Game ROM"
@@ -593,6 +596,60 @@ static void SaveSetupSettings(void) {
   // Append our settings
   fprintf(f, "accessibility_enabled=%d\n", g_a11y ? 1 : 0);
   fprintf(f, "setup_language=%s\n", g_langs[g_lang_selected].code);
+  fclose(f);
+
+  // Also update zelda3.ini: Language and Controls (AZERTY for French)
+  SaveGameConfig();
+}
+
+static void SaveGameConfig(void) {
+  char ini_buf[8192] = "";
+  FILE *f = fopen("zelda3.ini", "r");
+  if (f) {
+    size_t n = fread(ini_buf, 1, sizeof(ini_buf) - 1, f);
+    ini_buf[n] = 0;
+    fclose(f);
+  }
+  f = fopen("zelda3.ini", "w");
+  if (!f) return;
+
+  bool wrote_lang = false, wrote_ctrl = false;
+  const char *lang_code = g_langs[g_lang_selected].code;
+  bool is_fr = (strcmp(lang_code, "fr") == 0);
+  const char *controls_val = is_fr
+    ? "Up, Down, Left, Right, Right Shift, Return, x, w, s, q, c, v"
+    : "Up, Down, Left, Right, Right Shift, Return, x, z, s, a, c, v";
+
+  char *p = ini_buf;
+  while (*p) {
+    char *nl = strchr(p, '\n');
+    int len = nl ? (int)(nl - p) : (int)strlen(p);
+
+    // Replace Language line
+    if (strncmp(p, "Language", 8) == 0 && !wrote_lang) {
+      char *eq = memchr(p, '=', len);
+      if (eq) {
+        fprintf(f, "Language = %s\n", lang_code);
+        wrote_lang = true;
+        p = nl ? nl + 1 : p + len;
+        continue;
+      }
+    }
+    // Replace Controls line (skip commented ones)
+    if (p[0] != '#' && strncmp(p, "Controls", 8) == 0 && !wrote_ctrl) {
+      char *eq = memchr(p, '=', len);
+      if (eq) {
+        fprintf(f, "Controls = %s\n", controls_val);
+        wrote_ctrl = true;
+        p = nl ? nl + 1 : p + len;
+        continue;
+      }
+    }
+
+    fwrite(p, 1, len, f);
+    fputc('\n', f);
+    p = nl ? nl + 1 : p + len;
+  }
   fclose(f);
 }
 

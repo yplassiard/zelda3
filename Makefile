@@ -4,9 +4,10 @@ SRCS:=$(wildcard src/*.c snes/*.c) third_party/gl_core/gl_core_3_1.c third_party
 OBJS:=$(SRCS:%.c=%.o)
 PYTHON:=/usr/bin/env python3
 CFLAGS:=$(if $(CFLAGS),$(CFLAGS),-O2 -Werror) -I .
-CFLAGS:=${CFLAGS} $(shell sdl2-config --cflags) -DSYSTEM_VOLUME_MIXER_AVAILABLE=0
+CFLAGS+=-DSYSTEM_VOLUME_MIXER_AVAILABLE=0
 
 ifeq (${OS},Windows_NT)
+    CFLAGS+=$(shell sdl2-config --cflags)
     WINDRES:=windres
     RES:=zelda3.res
     WIN_SRCS:=src/platform/win32/speechsynthesis.c src/platform/win32/filepicker.c
@@ -14,12 +15,21 @@ ifeq (${OS},Windows_NT)
     SDLFLAGS:=-Wl,-Bstatic $(shell sdl2-config --static-libs) -lcomdlg32
 else
     SRCS+=$(wildcard src/platform/linux/*.c)
-    SDLFLAGS:=$(shell sdl2-config --libs) -lm
     UNAME_S:=$(shell uname -s)
     ifeq ($(UNAME_S),Darwin)
+        ifneq ($(wildcard third_party/SDL2.framework),)
+            CFLAGS+=-I third_party/SDL2.framework/Headers -D_THREAD_SAFE
+            SDLFLAGS:=-F third_party -rpath @executable_path/third_party -framework SDL2 -lm
+        else
+            CFLAGS+=$(shell sdl2-config --cflags)
+            SDLFLAGS:=$(shell sdl2-config --libs) -lm
+        endif
         OBJC_SRCS:=src/platform/macos/speechsynthesis.m src/platform/macos/filepicker.m
         OBJC_OBJS:=$(OBJC_SRCS:%.m=%.o)
         SDLFLAGS+=-framework AVFoundation -framework Foundation -framework Cocoa -framework UniformTypeIdentifiers -lobjc
+    else
+        CFLAGS+=$(shell sdl2-config --cflags)
+        SDLFLAGS:=$(shell sdl2-config --libs) -lm
     endif
 endif
 

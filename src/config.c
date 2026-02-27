@@ -529,6 +529,13 @@ static bool ParseOneConfigFile(const char *filename, int depth) {
   return true;
 }
 
+void ResetKeymap(void) {
+  memset(keymap_hash_first, 0, sizeof(keymap_hash_first));
+  keymap_hash_size = 0;
+  memset(has_keynameid, 0, sizeof(has_keynameid));
+  has_joypad_controls = false;
+}
+
 void ParseConfigFile(const char *filename) {
   g_config.msuvolume = 100;  // default msu volume, 100%
 
