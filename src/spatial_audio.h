@@ -21,6 +21,7 @@ enum {
   kSpatialCue_DeepWater,
   kSpatialCue_Hazard,
   kSpatialCue_Conveyor,
+  kSpatialCue_Item,
   kSpatialCue_Count,
 };
 
@@ -38,6 +39,7 @@ enum {
   kCueGroup_DeepWater,
   kCueGroup_Hazard,
   kCueGroup_Conveyor,
+  kCueGroup_Item,       // Collectible items on ground
   kCueGroup_Terrain,    // Grass/Water/Ice underfoot
   kCueGroup_Combat,     // Sword/Danger/Sonar/Blocked
   kCueGroup_Count,
@@ -52,6 +54,9 @@ void SpatialAudio_ScanFrame(void);
 void SpatialAudio_MixAudio(int16 *buf, int samples, int channels);
 void SpatialAudio_SpeakHealth(void);
 void SpatialAudio_SpeakLocation(void);
+void SpatialAudio_SpeakPosition(void);
+void SpatialAudio_SpeakProgress(void);
+void SpatialAudio_SpeakScreenDescription(void);
 
 // Sound legend menu
 void SpatialAudio_ToggleLegend(void);

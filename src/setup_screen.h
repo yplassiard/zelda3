@@ -23,6 +23,9 @@ bool SetupScreen_ShouldReenter(void);
 // Returns true if the user enabled accessibility in the setup screen.
 bool SetupScreen_GetAccessibility(void);
 
+// Set accessibility state externally (e.g. sync from in-game toggle before re-enter).
+void SetupScreen_SetAccessibility(bool enabled);
+
 // Returns the selected language code (e.g. "us", "fr").
 const char *SetupScreen_GetLanguage(void);
 

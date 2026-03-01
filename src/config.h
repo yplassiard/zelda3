@@ -41,6 +41,9 @@ enum {
   kKeys_SpeakLocation,
   kKeys_SoundLegend,
   kKeys_AccessibilityOptions,
+  kKeys_SpeakPosition,
+  kKeys_SpeakProgress,
+  kKeys_SpeakScreen,
   kKeys_SetupScreen,
   kKeys_Total,
 };

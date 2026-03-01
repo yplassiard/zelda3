@@ -67,6 +67,50 @@ static const char * const kDefaultStrings[kA11y_StringCount] = {
   [kA11y_FmtMarkersRemaining] = "%d locations marked.",
   [kA11y_FmtMarkerNav]      = "%s. %d of %d.",
   [kA11y_NoMarkers]         = "No markers.",
+  // Dungeon room exits (F1)
+  [kA11y_FmtDoorDir]        = "Door to the %s. ",
+  [kA11y_FmtLockedDoorDir]  = "Locked door to the %s. ",
+  [kA11y_FmtBombWallDir]    = "Bombable wall to the %s. ",
+  [kA11y_FmtShutterDir]     = "Shutter door to the %s. ",
+  [kA11y_StairsUp]          = "Stairs up. ",
+  [kA11y_StairsDown]        = "Stairs down. ",
+  [kA11y_NoDoors]           = "No exits. ",
+  // Position compass (F3)
+  [kA11y_PosNorthwest]      = "Northwest",
+  [kA11y_PosNorth2]         = "North",
+  [kA11y_PosNortheast]      = "Northeast",
+  [kA11y_PosWest]           = "West",
+  [kA11y_PosCenter]         = "Center",
+  [kA11y_PosEast]           = "East",
+  [kA11y_PosSouthwest]      = "Southwest",
+  [kA11y_PosSouth2]         = "South",
+  [kA11y_PosSoutheast]      = "Southeast",
+  [kA11y_FmtPositionOf]     = "%s of zone. ",
+  // Dungeon progress (F4)
+  [kA11y_FmtChestsOpened]   = "%d of %d chests opened. ",
+  [kA11y_FmtKeys]           = "%d keys. ",
+  [kA11y_BigKeyYes]         = "Big key obtained. ",
+  [kA11y_BigKeyNo]          = "No big key. ",
+  [kA11y_BossDefeated]      = "Boss defeated. ",
+  [kA11y_BossNotDefeated]   = "Boss not defeated. ",
+  [kA11y_NotInDungeon]      = "Not in a dungeon.",
+  // Screen description (F5)
+  [kA11y_FmtPassageDir]     = "Passage to the %s. ",
+  [kA11y_FmtObjectDirDist]  = "%s to the %s, %d pixels. ",
+  [kA11y_FmtEnemiesNearby]  = "%d enemies nearby. ",
+  [kA11y_FmtItemDirDist]    = "Item to the %s, %d pixels. ",
+  [kA11y_FmtWallDir]        = "Wall to the %s, %d pixels. ",
+  // Sprite sub-classification (F2)
+  [kA11y_Musician]          = "Musician",
+  [kA11y_FortuneTeller]     = "Fortune Teller",
+  [kA11y_OldMan]            = "Old Man",
+  [kA11y_Uncle]             = "Uncle",
+  [kA11y_Princess]          = "Princess",
+  [kA11y_Elder]             = "Elder",
+  [kA11y_Shopkeeper]        = "Shopkeeper",
+  [kA11y_Priest]            = "Priest",
+  [kA11y_Villager]          = "Villager",
+  [kA11y_Guard]             = "Guard",
 };
 
 // --- Default indexed arrays ---
@@ -75,7 +119,7 @@ static const char * const kDefaultStrings[kA11y_StringCount] = {
 #define MAX_ENTRANCES 99
 #define MAX_ITEMS 20
 #define MAX_DUNGEONS 17
-#define MAX_LEGEND 24
+#define MAX_LEGEND 25
 #define MAX_OPTIONS 5
 #define MAX_SOUND_SETUP 16
 #define MAX_FLUTE 8
@@ -338,6 +382,7 @@ static const char * const kDefaultLegendNames[MAX_LEGEND] = {
   "Danger zone",
   "Alignment sonar",
   "Movement blocked",
+  "Collectible item",
 };
 
 static const char * const kDefaultOptionsNames[MAX_OPTIONS] = {
@@ -361,10 +406,10 @@ static const char * const kDefaultSoundSetupNames[MAX_SOUND_SETUP] = {
   "Deep Water volume",
   "Hazard volume",
   "Conveyor volume",
+  "Item volume",
   "Terrain volume",
   "Combat volume",
   "Detection Range",
-  "Back",
 };
 
 static const char * const kDefaultFluteNames[MAX_FLUTE] = {
@@ -422,6 +467,19 @@ static const KeyId kSystemKeys[] = {
   {"unnamed", kA11y_Unnamed}, {"flute", kA11y_Flute},
   {"light_world_map", kA11y_LightWorldMap}, {"dark_world_map", kA11y_DarkWorldMap},
   {"dungeon_map", kA11y_DungeonMap}, {"no_markers", kA11y_NoMarkers},
+  {"stairs_up", kA11y_StairsUp}, {"stairs_down", kA11y_StairsDown}, {"no_doors", kA11y_NoDoors},
+  {"pos_northwest", kA11y_PosNorthwest}, {"pos_north", kA11y_PosNorth2},
+  {"pos_northeast", kA11y_PosNortheast}, {"pos_west", kA11y_PosWest},
+  {"pos_center", kA11y_PosCenter}, {"pos_east", kA11y_PosEast},
+  {"pos_southwest", kA11y_PosSouthwest}, {"pos_south", kA11y_PosSouth2},
+  {"pos_southeast", kA11y_PosSoutheast},
+  {"big_key_yes", kA11y_BigKeyYes}, {"big_key_no", kA11y_BigKeyNo},
+  {"boss_defeated", kA11y_BossDefeated}, {"boss_not_defeated", kA11y_BossNotDefeated},
+  {"not_in_dungeon", kA11y_NotInDungeon},
+  {"musician", kA11y_Musician}, {"fortune_teller", kA11y_FortuneTeller},
+  {"old_man", kA11y_OldMan}, {"uncle", kA11y_Uncle}, {"princess", kA11y_Princess},
+  {"elder", kA11y_Elder}, {"shopkeeper", kA11y_Shopkeeper}, {"priest", kA11y_Priest},
+  {"villager", kA11y_Villager}, {"guard", kA11y_Guard},
   {NULL, 0}
 };
 
@@ -456,6 +514,13 @@ static const KeyId kFormatKeys[] = {
   {"speech_volume", kA11y_FmtSpeechVolume}, {"detection_range", kA11y_FmtDetectionRange},
   {"capital", kA11y_FmtCapital},
   {"markers_remaining", kA11y_FmtMarkersRemaining}, {"marker_nav", kA11y_FmtMarkerNav},
+  {"door_dir", kA11y_FmtDoorDir}, {"locked_door_dir", kA11y_FmtLockedDoorDir},
+  {"bomb_wall_dir", kA11y_FmtBombWallDir}, {"shutter_dir", kA11y_FmtShutterDir},
+  {"position_of", kA11y_FmtPositionOf},
+  {"chests_opened", kA11y_FmtChestsOpened}, {"keys", kA11y_FmtKeys},
+  {"passage_dir", kA11y_FmtPassageDir}, {"object_dir_dist", kA11y_FmtObjectDirDist},
+  {"enemies_nearby", kA11y_FmtEnemiesNearby}, {"item_dir_dist", kA11y_FmtItemDirDist},
+  {"wall_dir", kA11y_FmtWallDir},
   {NULL, 0}
 };
 

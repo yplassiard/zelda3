@@ -52,6 +52,7 @@ static bool g_a11y;             // accessibility toggle
 static bool g_a11y_announced;   // 3-sec announcement fired?
 static bool g_reenter;          // re-enter flag
 static char g_rom_path[512];    // path to US ROM
+static char g_app_dir[512];    // app support directory path
 static uint32_t g_frames;       // frame counter
 
 // ── Options submenu (g_submenu == 2) ──
@@ -66,7 +67,7 @@ enum {
 static int g_options_index;     // cursor in options menu
 static int g_voice_cursor;      // cursor in voice submenu
 static int g_legend_index;      // cursor in legend menu
-#define LEGEND_COUNT 24
+#define LEGEND_COUNT 25
 
 // ── Pixel buffer ──
 static uint32_t g_fb[SETUP_W * SETUP_H];
@@ -556,17 +557,27 @@ static void Render(void) {
 //  Settings persistence (zelda3_a11y.ini)
 // ════════════════════════════════════════════════════════════
 
+static void GetA11yIniPath(char *buf, int buf_size) {
+  if (g_app_dir[0])
+    snprintf(buf, buf_size, "%s/zelda3_a11y.ini", g_app_dir);
+  else
+    snprintf(buf, buf_size, "zelda3_a11y.ini");
+}
+
 static void SaveSetupSettings(void) {
   // Read existing a11y settings to preserve them
+  char ini_path[512];
+  GetA11yIniPath(ini_path, sizeof(ini_path));
+
   char existing[4096] = "";
-  FILE *f = fopen("zelda3_a11y.ini", "r");
+  FILE *f = fopen(ini_path, "r");
   if (f) {
     size_t n = fread(existing, 1, sizeof(existing) - 1, f);
     existing[n] = 0;
     fclose(f);
   }
 
-  f = fopen("zelda3_a11y.ini", "w");
+  f = fopen(ini_path, "w");
   if (!f) return;
 
   bool wrote_section = false;
@@ -650,24 +661,33 @@ static void SaveGameConfig(void) {
     fputc('\n', f);
     p = nl ? nl + 1 : p + len;
   }
+  // Append if not found in existing config
+  if (!wrote_lang)
+    fprintf(f, "Language = %s\n", lang_code);
+  if (!wrote_ctrl)
+    fprintf(f, "Controls = %s\n", controls_val);
   fclose(f);
 }
 
+static void TrimNewline(const char *src, char *dst, int dst_size) {
+  int i = 0;
+  while (*src && *src != '\n' && *src != '\r' && i < dst_size - 1)
+    dst[i++] = *src++;
+  dst[i] = 0;
+}
+
 static void LoadSetupSettings(void) {
-  FILE *f = fopen("zelda3_a11y.ini", "r");
+  char ini_path[512];
+  GetA11yIniPath(ini_path, sizeof(ini_path));
+  FILE *f = fopen(ini_path, "r");
   if (!f) return;
   char line[256];
   while (fgets(line, sizeof(line), f)) {
     if (strncmp(line, "accessibility_enabled=", 22) == 0) {
       g_a11y = (line[22] == '1');
     } else if (strncmp(line, "setup_language=", 15) == 0) {
-      // Trim newline
       char val[32];
-      int i = 0;
-      const char *p = line + 15;
-      while (*p && *p != '\n' && *p != '\r' && i < (int)sizeof(val) - 1)
-        val[i++] = *p++;
-      val[i] = 0;
+      TrimNewline(line + 15, val, sizeof(val));
       for (int li = 0; li < NUM_LANGS; li++) {
         if (strcmp(g_langs[li].code, val) == 0) {
           g_lang_selected = li;
@@ -745,10 +765,22 @@ static bool DoExtraction(const char *app_dir,
       }
     }
 
-    // Copy ROM to App Support for future language additions
+    // Copy ROMs to App Support for future re-entry / language additions
+    // Skip if source is already in app support (avoid copy-to-self truncation)
     char rom_dst[512];
     snprintf(rom_dst, sizeof(rom_dst), "%s/zelda3.sfc", app_dir);
-    CopyFile(g_rom_path, rom_dst);
+    if (strcmp(g_rom_path, rom_dst) != 0)
+      CopyFile(g_rom_path, rom_dst);
+
+    // Copy language ROM too so re-enter can find it
+    if (g_lang_selected > 0 && g_langs[g_lang_selected].rom_loaded &&
+        g_langs[g_lang_selected].rom_path[0]) {
+      char lang_dst[512];
+      snprintf(lang_dst, sizeof(lang_dst), "%s/zelda3_%s.sfc",
+               app_dir, g_langs[g_lang_selected].code);
+      if (strcmp(g_langs[g_lang_selected].rom_path, lang_dst) != 0)
+        CopyFile(g_langs[g_lang_selected].rom_path, lang_dst);
+    }
   } else {
     const char *err = AssetExtract_GetError();
     char msg[256];
@@ -1077,9 +1109,42 @@ bool SetupScreen_IsNeeded(const char *app_support_dir) {
   return true;
 }
 
+static void DetectExistingROMs(const char *app_dir) {
+  // Check for US ROM in app support directory
+  if (!g_rom_path[0]) {
+    char path[512];
+    snprintf(path, sizeof(path), "%s/zelda3.sfc", app_dir);
+    FILE *f = fopen(path, "rb");
+    if (f) {
+      fclose(f);
+      snprintf(g_rom_path, sizeof(g_rom_path), "%s", path);
+    }
+  }
+
+  // Check for language ROMs in app support directory
+  for (int i = 1; i < NUM_LANGS; i++) {
+    if (!g_langs[i].rom_loaded) {
+      char path[512];
+      snprintf(path, sizeof(path), "%s/zelda3_%s.sfc", app_dir, g_langs[i].code);
+      FILE *f = fopen(path, "rb");
+      if (f) {
+        fclose(f);
+        snprintf(g_langs[i].rom_path, sizeof(g_langs[i].rom_path), "%s", path);
+        g_langs[i].rom_loaded = true;
+      }
+    }
+  }
+}
+
 bool SetupScreen_Run(SDL_Window *window, SDL_Renderer *renderer,
                      const char *app_support_dir) {
-  // Reset state
+  // Store app dir for settings persistence
+  snprintf(g_app_dir, sizeof(g_app_dir), "%s", app_support_dir);
+
+  // Save current a11y state (may have been set externally before re-enter)
+  bool a11y_override = g_a11y;
+
+  // Reset UI navigation state
   g_item = 0;
   g_submenu = 0;
   g_lang_cursor = 0;
@@ -1092,8 +1157,21 @@ bool SetupScreen_Run(SDL_Window *window, SDL_Renderer *renderer,
   g_voice_cursor = 0;
   g_legend_index = 0;
 
-  // Load persisted settings (may set g_a11y, g_lang_selected)
+  // Reset language ROM state
+  for (int i = 1; i < NUM_LANGS; i++) {
+    g_langs[i].rom_loaded = false;
+    g_langs[i].rom_path[0] = 0;
+  }
+
+  // Load persisted settings (restores g_a11y, g_lang_selected)
   LoadSetupSettings();
+
+  // Detect ROMs already present in app support directory
+  DetectExistingROMs(app_support_dir);
+
+  // If accessibility was set externally (re-enter from game), use that state
+  if (a11y_override)
+    g_a11y = true;
 
   // Create texture for rendering
   SDL_Texture *tex = SDL_CreateTexture(renderer,
@@ -1160,6 +1238,10 @@ bool SetupScreen_ShouldReenter(void) {
 
 bool SetupScreen_GetAccessibility(void) {
   return g_a11y;
+}
+
+void SetupScreen_SetAccessibility(bool enabled) {
+  g_a11y = enabled;
 }
 
 const char *SetupScreen_GetLanguage(void) {

@@ -7,11 +7,9 @@ INI="zelda3.ini"
 
 echo "=== Building zelda3 (universal binary) ==="
 
-# Use bundled SDL2.framework instead of Homebrew (universal: arm64 + x86_64)
-# Symlink lets internal SDL2 headers find each other via <SDL2/...> paths
-ln -sfn SDL2.framework/Headers SDL2
-SDL2_CFLAGS="-I SDL2.framework/Headers -D_THREAD_SAFE"
-SDL2_LIBS="-F . -framework SDL2 -Wl,-rpath,@executable_path/../Frameworks -lm -framework AVFoundation -framework Foundation -framework Cocoa -framework UniformTypeIdentifiers -lobjc"
+# Use bundled SDL2.framework from third_party/ (universal: arm64 + x86_64)
+SDL2_CFLAGS="-iframework third_party -I third_party/SDL2.framework/Headers -D_THREAD_SAFE"
+SDL2_LIBS="-F third_party -framework SDL2 -Wl,-rpath,@executable_path/../Frameworks -lm -framework AVFoundation -framework Foundation -framework Cocoa -framework UniformTypeIdentifiers -lobjc"
 
 build_arch() {
   make clean_obj
@@ -38,7 +36,7 @@ cp zelda3 "${BUNDLE}/Contents/MacOS/zelda3"
 
 # Embed SDL2 framework so the app is self-contained
 mkdir -p "${BUNDLE}/Contents/Frameworks"
-cp -R SDL2.framework "${BUNDLE}/Contents/Frameworks/"
+cp -R third_party/SDL2.framework "${BUNDLE}/Contents/Frameworks/"
 
 # Copy config if present
 if [ -f "${INI}" ]; then

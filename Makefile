@@ -18,7 +18,7 @@ else
     UNAME_S:=$(shell uname -s)
     ifeq ($(UNAME_S),Darwin)
         ifneq ($(wildcard third_party/SDL2.framework),)
-            CFLAGS+=-I third_party/SDL2.framework/Headers -D_THREAD_SAFE
+            CFLAGS+=-iframework third_party -I third_party/SDL2.framework/Headers -D_THREAD_SAFE
             SDLFLAGS:=-F third_party -rpath @executable_path/third_party -framework SDL2 -lm
         else
             CFLAGS+=$(shell sdl2-config --cflags)

@@ -103,6 +103,55 @@ enum {
   kA11y_FmtMarkerNav,         // "%s. %d of %d."
   kA11y_NoMarkers,            // "No markers."
 
+  // Dungeon room exits (F1)
+  kA11y_FmtDoorDir,           // "Door to the %s. "
+  kA11y_FmtLockedDoorDir,     // "Locked door to the %s. "
+  kA11y_FmtBombWallDir,       // "Bombable wall to the %s. "
+  kA11y_FmtShutterDir,        // "Shutter door to the %s. "
+  kA11y_StairsUp,             // "Stairs up. "
+  kA11y_StairsDown,           // "Stairs down. "
+  kA11y_NoDoors,              // "No exits. "
+
+  // Position compass (F3)
+  kA11y_PosNorthwest,         // "Northwest"
+  kA11y_PosNorth2,            // "North"
+  kA11y_PosNortheast,         // "Northeast"
+  kA11y_PosWest,              // "West"
+  kA11y_PosCenter,            // "Center"
+  kA11y_PosEast,              // "East"
+  kA11y_PosSouthwest,         // "Southwest"
+  kA11y_PosSouth2,            // "South"
+  kA11y_PosSoutheast,         // "Southeast"
+  kA11y_FmtPositionOf,        // "%s of zone. "
+
+  // Dungeon progress (F4)
+  kA11y_FmtChestsOpened,      // "%d of %d chests opened. "
+  kA11y_FmtKeys,              // "%d keys. "
+  kA11y_BigKeyYes,            // "Big key obtained. "
+  kA11y_BigKeyNo,             // "No big key. "
+  kA11y_BossDefeated,         // "Boss defeated. "
+  kA11y_BossNotDefeated,      // "Boss not defeated. "
+  kA11y_NotInDungeon,         // "Not in a dungeon."
+
+  // Screen description (F5)
+  kA11y_FmtPassageDir,        // "Passage to the %s. "
+  kA11y_FmtObjectDirDist,     // "%s to the %s, %d pixels. "
+  kA11y_FmtEnemiesNearby,     // "%d enemies nearby. "
+  kA11y_FmtItemDirDist,       // "Item to the %s, %d pixels. "
+  kA11y_FmtWallDir,           // "Wall to the %s, %d pixels. "
+
+  // Sprite sub-classification (F2)
+  kA11y_Musician,
+  kA11y_FortuneTeller,
+  kA11y_OldMan,
+  kA11y_Uncle,
+  kA11y_Princess,
+  kA11y_Elder,
+  kA11y_Shopkeeper,
+  kA11y_Priest,
+  kA11y_Villager,
+  kA11y_Guard,
+
   kA11y_StringCount,
 };
 

@@ -43,6 +43,8 @@ static const uint16 kDefaultKbdControls[kKeys_Total] = {
   N, N, _(SDLK_EQUALS), _(SDLK_MINUS),
   // ToggleSpatialAudio, SpeakHealth, SpeakLocation, SoundLegend, AccessibilityOptions
   C(SDLK_SPACE), _(SDLK_h), _(SDLK_i), C(SDLK_h), C(SDLK_o),
+  // SpeakPosition, SpeakProgress, SpeakScreen
+  _(SDLK_n), _(SDLK_g), _(SDLK_e),
   // SetupScreen
   S(SDLK_F12),
 };
@@ -71,6 +73,9 @@ static const KeyNameId kKeyNameId[] = {
   S(SpeakLocation),
   S(SoundLegend),
   S(AccessibilityOptions),
+  S(SpeakPosition),
+  S(SpeakProgress),
+  S(SpeakScreen),
   S(SetupScreen),
 };
 #undef S

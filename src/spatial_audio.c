@@ -5,6 +5,7 @@
 #include "tile_detect.h"
 #include "zelda_rtl.h"
 #include "assets.h"
+#include "dungeon.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
@@ -162,6 +163,12 @@ static uint32 g_chest_decay;
 static int g_npc_beep_pos;
 static uint32 g_npc_phase_inc2;  // E4 (330Hz) second note
 
+// Item ascending arpeggio state (C5-E5-G5)
+static int g_item_beep_pos;
+static uint32 g_item_phase_inc1;  // C5 (523Hz)
+static uint32 g_item_phase_inc2;  // E5 (659Hz)
+static uint32 g_item_phase_inc3;  // G5 (784Hz)
+
 // Hole proximity warning ding (plays when moving near a hole)
 static uint32 g_hole_warn_envelope;
 static int g_hole_warn_timer;
@@ -284,6 +291,7 @@ static const uint16 kBaseFreq[kSpatialCue_Count] = {
   180,  // DeepWater — wavering low tone
   800,  // Hazard — harsh rapid buzz
   300,  // Conveyor — double-pulse pattern
+  523,  // Item (C5) — bright ascending arpeggio
 };
 
 // Per-group volume control (0-100, default 100)
@@ -310,6 +318,7 @@ static int CueToGroup(int cue) {
   case kSpatialCue_DeepWater: return kCueGroup_DeepWater;
   case kSpatialCue_Hazard: return kCueGroup_Hazard;
   case kSpatialCue_Conveyor: return kCueGroup_Conveyor;
+  case kSpatialCue_Item: return kCueGroup_Item;
   default: return -1;
   }
 }
@@ -400,6 +409,14 @@ void SpatialAudio_Init(int sample_rate) {
     g_ding_timer = 0;
     g_npc_beep_pos = 0;
     g_npc_phase_inc2 = (uint32)((uint64)330 * 256 * 65536 / sample_rate);
+  }
+
+  // Item ascending arpeggio: C5 (523Hz), E5 (659Hz), G5 (784Hz)
+  {
+    g_item_beep_pos = 0;
+    g_item_phase_inc1 = (uint32)((uint64)523 * 256 * 65536 / sample_rate);
+    g_item_phase_inc2 = (uint32)((uint64)659 * 256 * 65536 / sample_rate);
+    g_item_phase_inc3 = (uint32)((uint64)784 * 256 * 65536 / sample_rate);
   }
 
   // Enemy: 100ms decay, 200ms repeat (now square wave — waveform change in MixAudio)
@@ -670,7 +687,7 @@ void SpatialAudio_SpeakLocation(void) {
   }
 
   // Build and speak summary
-  char buf[256];
+  char buf[512];
   int pos = 0;
   if (area)
     pos += snprintf(buf + pos, sizeof(buf) - pos, "%s. ", area);
@@ -682,6 +699,37 @@ void SpatialAudio_SpeakLocation(void) {
     pos += snprintf(buf + pos, sizeof(buf) - pos, A11y(kA11y_FmtEntranceNearby), entrance);
   if (has_npc && npc_dir)
     pos += snprintf(buf + pos, sizeof(buf) - pos, A11y(kA11y_FmtNPCDir), npc_dir);
+
+  // Dungeon room exits (F1) — append when indoors
+  if (player_is_indoors) {
+    static const int kDoorDir[4] = { kA11y_north, kA11y_south, kA11y_left, kA11y_right };
+    bool any_door = false;
+    for (int i = 0; i < 16; i++) {
+      if (dung_door_tilemap_address[i] == 0) continue;
+      uint8 dt = (uint8)(door_type_and_slot[i] & 0xFF);
+      uint16 dd = dung_door_direction[i];
+      if (dd > 3) continue;
+      const char *dn = A11y(kDoorDir[dd]);
+      const char *fmt;
+      if (dt == kDoorType_SmallKeyDoor) fmt = A11y(kA11y_FmtLockedDoorDir);
+      else if (dt == kDoorType_BreakableWall || dt == kDoorType_LgExplosion) fmt = A11y(kA11y_FmtBombWallDir);
+      else if (dt == kDoorType_Shutter || dt == kDoorType_ShuttersTwoWay) fmt = A11y(kA11y_FmtShutterDir);
+      else fmt = A11y(kA11y_FmtDoorDir);
+      pos += snprintf(buf + pos, sizeof(buf) - pos, fmt, dn);
+      any_door = true;
+    }
+    // Check for staircases
+    for (int i = 0; i < 4; i++) {
+      if (dung_hdr_travel_destinations[i] != 0) {
+        pos += snprintf(buf + pos, sizeof(buf) - pos, "%s", A11y(kA11y_StairsDown));
+        any_door = true;
+        break;
+      }
+    }
+    if (!any_door)
+      pos += snprintf(buf + pos, sizeof(buf) - pos, "%s", A11y(kA11y_NoDoors));
+  }
+
   if (pos == 0)
     snprintf(buf, sizeof(buf), "%s", A11y(kA11y_FmtNothingNearby));
 
@@ -734,6 +782,49 @@ static bool IsBeamOpaque(int cat, uint8 tile, bool indoors) {
   if (cat == kSpatialCue_Ledge) return true;
   if (cat == kSpatialCue_Liftable) return true;
   return false;
+}
+
+// Classify a sprite type as Item (collectible pickup on ground)
+static bool IsItemSprite(uint8 type) {
+  switch (type) {
+  case 0xD8: case 0xD9: case 0xDA: case 0xDB: // heart, rupee, bomb, arrow
+  case 0xDC: // magic decanter
+  case 0xDF: // key
+  case 0xE0: // big key
+  case 0xE1: // shield
+  case 0xE3: // bee
+  case 0xEB: case 0xEC: // chicken / faerie
+    return true;
+  default:
+    return false;
+  }
+}
+
+// Get the localized name string ID for a known NPC sprite type
+// Returns -1 if the sprite is not a known named NPC
+static int GetNPCNameStringId(uint8 type) {
+  switch (type) {
+  case 0x2E: return kA11y_Musician;
+  case 0x30: case 0x31: return kA11y_FortuneTeller;
+  case 0x36: case 0x37: return kA11y_OldMan;
+  case 0x73: return kA11y_Uncle;
+  case 0x76: return kA11y_Princess;
+  case 0x78: return kA11y_Elder;
+  case 0xBB: case 0xBC: return kA11y_Shopkeeper;
+  case 0x04: case 0x05: return kA11y_Priest;
+  case 0x17: case 0x18: case 0x19: case 0x75: return kA11y_Villager;
+  case 0x41: case 0x42: case 0x43: case 0x44: case 0x45:
+  case 0x46: case 0x47: case 0x48: return kA11y_Guard;
+  default: return -1;
+  }
+}
+
+// Classify a sprite into a spatial cue category
+static int ClassifySprite(int k) {
+  uint8 type = sprite_type[k];
+  if (IsItemSprite(type)) return kSpatialCue_Item;
+  if (sprite_bump_damage[k] > 0) return kSpatialCue_Enemy;
+  return kSpatialCue_NPC;
 }
 
 #if defined(__APPLE__) || defined(_WIN32)
@@ -1423,7 +1514,7 @@ void SpatialAudio_ScanFrame(void) {
 
     if (dx < -SCAN_RANGE || dx > SCAN_RANGE || dy < -SCAN_RANGE || dy > SCAN_RANGE) continue;
 
-    int cat = sprite_bump_damage[k] > 0 ? kSpatialCue_Enemy : kSpatialCue_NPC;
+    int cat = ClassifySprite(k);
     uint32 d2 = (uint32)(dx * dx + dy * dy);
     if (d2 < best_dist2[cat]) {
       best_dist2[cat] = d2;
@@ -1685,6 +1776,10 @@ void SpatialAudio_MixAudio(int16 *buf, int samples, int channels) {
     g_ding_timer--;
     g_npc_beep_pos++;
 
+    // Item arpeggio timer: 3 notes x 50ms + gaps, repeat every 1.0s
+    if (g_item_beep_pos >= g_sample_rate) g_item_beep_pos = 0;
+    g_item_beep_pos++;
+
     if (g_enemy_timer <= 0) { g_enemy_envelope = 65536; g_enemy_timer = g_sample_rate / 5; }
     g_enemy_timer--;
     g_enemy_envelope = (uint32)((uint64)g_enemy_envelope * g_enemy_decay >> 16);
@@ -1825,6 +1920,20 @@ void SpatialAudio_MixAudio(int16 *buf, int samples, int channels) {
         bool pulse_on = (pos_in_cycle < pulse_len) ||
                         (pos_in_cycle >= pulse_len * 2 && pos_in_cycle < pulse_len * 3);
         if (!pulse_on) volume = 0;
+      } else if (c == kSpatialCue_Item) {
+        // Ascending arpeggio: 3 notes x 50ms, 30ms gaps, repeats every 1.0s
+        int note_len = g_sample_rate * 50 / 1000;
+        int gap_len = g_sample_rate * 30 / 1000;
+        int step = note_len + gap_len;
+        int pos = g_item_beep_pos;
+        int note_in = pos / step;
+        int pos_in_note = pos % step;
+        if (note_in < 3 && pos_in_note < note_len) {
+          int env = (note_len - pos_in_note) * 65536 / note_len;
+          volume = (int)((uint32)volume * env >> 16);
+        } else {
+          volume = 0;
+        }
       }
 
       // Apply per-group volume
@@ -1920,6 +2029,18 @@ void SpatialAudio_MixAudio(int16 *buf, int samples, int channels) {
         // frac: 65536→0 (descending) => freq goes from adj_inc to adj_inc/2
         uint32 frac = ((sweep_len - sw) * 65536) / sweep_len;
         uint32 inc = adj_inc / 2 + (uint32)((uint64)(adj_inc / 2) * frac >> 16);
+        raw = g_sine_table[(g_phase[c] >> 16) & 0xFF];
+        g_phase[c] += inc;
+      } else if (c == kSpatialCue_Item) {
+        // Ascending arpeggio: pick note based on position in pattern
+        int note_len = g_sample_rate * 50 / 1000;
+        int gap_len = g_sample_rate * 30 / 1000;
+        int step = note_len + gap_len;
+        int note_in = g_item_beep_pos / step;
+        uint32 inc;
+        if (note_in == 0) inc = g_item_phase_inc1;       // C5
+        else if (note_in == 1) inc = g_item_phase_inc2;   // E5
+        else inc = g_item_phase_inc3;                     // G5
         raw = g_sine_table[(g_phase[c] >> 16) & 0xFF];
         g_phase[c] += inc;
       } else {
@@ -2440,6 +2561,27 @@ void SpatialAudio_MixAudio(int16 *buf, int samples, int channels) {
           demo_vol = env;
           break;
         }
+        case 24: {
+          // Item: ascending arpeggio C5-E5-G5, 50ms each, 30ms gaps, 1s repeat
+          int note_len = g_sample_rate * 50 / 1000;
+          int gap = g_sample_rate * 30 / 1000;
+          int step = note_len + gap;
+          int period = g_sample_rate;
+          int pos_in = g_legend_demo_pos % period;
+          int note_idx = pos_in / step;
+          int pos_in_note = pos_in % step;
+          if (note_idx < 3 && pos_in_note < note_len) {
+            int env = (note_len - pos_in_note) * 256 / note_len;
+            uint32 inc;
+            if (note_idx == 0) inc = g_item_phase_inc1;       // C5
+            else if (note_idx == 1) inc = g_item_phase_inc2;  // E5
+            else inc = g_item_phase_inc3;                      // G5
+            demo_raw = g_sine_table[(g_legend_demo_phase >> 16) & 0xFF];
+            g_legend_demo_phase += inc;
+            demo_vol = env;
+          }
+          break;
+        }
         }
         int32 demo_scaled = (int32)demo_raw * demo_vol >> 8;
         mix_L += demo_scaled;
@@ -2455,7 +2597,7 @@ void SpatialAudio_MixAudio(int16 *buf, int samples, int channels) {
 
 // --- Sound Legend ---
 
-#define LEGEND_COUNT 24
+#define LEGEND_COUNT 25
 
 bool SpatialAudio_IsLegendActive(void) {
   return g_legend_active;
@@ -2526,6 +2668,7 @@ enum {
   kSoundSetup_DeepWater,
   kSoundSetup_Hazard,
   kSoundSetup_Conveyor,
+  kSoundSetup_Item,
   kSoundSetup_Terrain,
   kSoundSetup_Combat,
   kSoundSetup_DetectionRange,
@@ -2789,13 +2932,415 @@ void SpatialAudio_SetScanRange(int range) {
   g_scan_range = range;
 }
 
+// --- F1: Dungeon Room Exits Announcement ---
+
+#if defined(__APPLE__) || defined(_WIN32)
+static int AppendDungeonExits(char *buf, int bufsz, int pos) {
+  if (!player_is_indoors) return pos;
+
+  // Door direction names: 0=N, 1=S, 2=W, 3=E
+  static const int kDoorDirToA11y[4] = { kA11y_north, kA11y_south, kA11y_left, kA11y_right };
+  bool any_exit = false;
+
+  // Scan active doors (up to 16 slots)
+  for (int i = 0; i < 16; i++) {
+    if (dung_door_tilemap_address[i] == 0) continue;
+    uint8 door_type = (uint8)(door_type_and_slot[i] & 0xFF);
+    uint16 dir = dung_door_direction[i];
+    if (dir > 3) continue;
+    const char *dir_name = A11y(kDoorDirToA11y[dir]);
+
+    const char *fmt;
+    if (door_type == kDoorType_SmallKeyDoor)
+      fmt = A11y(kA11y_FmtLockedDoorDir);
+    else if (door_type == kDoorType_BreakableWall || door_type == kDoorType_LgExplosion)
+      fmt = A11y(kA11y_FmtBombWallDir);
+    else if (door_type == kDoorType_Shutter || door_type == kDoorType_ShuttersTwoWay)
+      fmt = A11y(kA11y_FmtShutterDir);
+    else
+      fmt = A11y(kA11y_FmtDoorDir);
+
+    pos += snprintf(buf + pos, bufsz - pos, fmt, dir_name);
+    any_exit = true;
+  }
+
+  // Check for staircases via travel destinations
+  for (int i = 0; i < 5; i++) {
+    if (dung_hdr_travel_destinations[i] != 0) {
+      // Destinations 0-3: stairs that go between layers; 4: pit destination
+      if (i < 4) {
+        pos += snprintf(buf + pos, bufsz - pos, "%s", A11y(kA11y_StairsDown));
+        any_exit = true;
+        break;  // Just report once
+      }
+    }
+  }
+
+  if (!any_exit)
+    pos += snprintf(buf + pos, bufsz - pos, "%s", A11y(kA11y_NoDoors));
+
+  return pos;
+}
+#endif
+
+// --- F3: Position Compass ---
+
+void SpatialAudio_SpeakPosition(void) {
+  if (!g_enabled) return;
+#if defined(__APPLE__) || defined(_WIN32)
+  uint8 mod = main_module_index;
+  if (mod != 7 && mod != 9 && mod != 14) {
+    SpeechSynthesis_Speak(A11y(kA11y_InMenu));
+    return;
+  }
+
+  // 3x3 grid position IDs indexed by [y][x]
+  static const int kPosGrid[3][3] = {
+    { kA11y_PosNorthwest, kA11y_PosNorth2,  kA11y_PosNortheast },
+    { kA11y_PosWest,      kA11y_PosCenter,  kA11y_PosEast },
+    { kA11y_PosSouthwest, kA11y_PosSouth2,  kA11y_PosSoutheast },
+  };
+
+  int grid_x, grid_y;
+
+  if (player_is_indoors) {
+    // Dungeon: use quadrant-based position
+    // Room is 512x512 pixels (two 256x256 quadrants in each dimension)
+    uint16 lx = link_x_coord & 0x1FF;
+    uint16 ly = link_y_coord & 0x1FF;
+    int px = lx * 100 / 512;
+    int py = ly * 100 / 512;
+    grid_x = px < 33 ? 0 : (px > 66 ? 2 : 1);
+    grid_y = py < 33 ? 0 : (py > 66 ? 2 : 1);
+  } else {
+    // Overworld: use scroll vars to determine zone boundaries
+    uint16 lx = link_x_coord;
+    uint16 ly = link_y_coord;
+    uint16 xs = ow_scroll_vars0.xstart;
+    uint16 xe = ow_scroll_vars0.xend;
+    uint16 ys = ow_scroll_vars0.ystart;
+    uint16 ye = ow_scroll_vars0.yend;
+    int w = (xe > xs) ? (xe - xs) : 256;
+    int h = (ye > ys) ? (ye - ys) : 224;
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    int px = (int)(lx - xs) * 100 / w;
+    int py = (int)(ly - ys) * 100 / h;
+    if (px < 0) px = 0; if (px > 100) px = 100;
+    if (py < 0) py = 0; if (py > 100) py = 100;
+    grid_x = px < 33 ? 0 : (px > 66 ? 2 : 1);
+    grid_y = py < 33 ? 0 : (py > 66 ? 2 : 1);
+  }
+
+  const char *pos_name = A11y(kPosGrid[grid_y][grid_x]);
+  char buf[128];
+  snprintf(buf, sizeof(buf), A11y(kA11y_FmtPositionOf), pos_name);
+  SpeechSynthesis_Speak(buf);
+#endif
+}
+
+// --- F4: Dungeon Progress Report ---
+
+void SpatialAudio_SpeakProgress(void) {
+  if (!g_enabled) return;
+#if defined(__APPLE__) || defined(_WIN32)
+  uint8 mod = main_module_index;
+  if (mod != 7 && mod != 9 && mod != 14) {
+    SpeechSynthesis_Speak(A11y(kA11y_InMenu));
+    return;
+  }
+
+  if (!player_is_indoors) {
+    SpeechSynthesis_Speak(A11y(kA11y_NotInDungeon));
+    return;
+  }
+
+  char buf[256];
+  int pos = 0;
+
+  // Dungeon name
+  uint8 palace_idx = BYTE(cur_palace_index_x2) / 2;
+  const char *name = A11yDungeonName(palace_idx);
+  if (name)
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "%s. ", name);
+
+  // Count chests: scan kDungeonRoomChests for rooms in this dungeon
+  // We count how many chests exist in rooms we've visited and how many are open
+  // For simplicity, count chests in the current room using dung_savegame_state_bits
+  int total_chests = 0;
+  int opened_chests = 0;
+  {
+    const uint8 *chest_data = kDungeonRoomChests;
+    for (int i = 0; i < kDungeonRoomChests_SIZE; i += 3, chest_data += 3) {
+      uint16 chest_room = *(uint16 *)chest_data;
+      uint16 room = chest_room & 0x7FFF;
+      // Check if this room belongs to the current dungeon by checking save_dung_info
+      // We can't easily map rooms to dungeons, so just count current room chests
+      if (room == dungeon_room_index) {
+        total_chests++;
+      }
+    }
+    // Count opened chests from dung_savegame_state_bits
+    static const uint16 kChestMasks[] = { 0x100, 0x200, 0x400, 0x800, 0x1000, 0x2000 };
+    for (int i = 0; i < 6 && i < total_chests; i++) {
+      if (dung_savegame_state_bits & kChestMasks[i])
+        opened_chests++;
+    }
+  }
+
+  if (total_chests > 0)
+    pos += snprintf(buf + pos, sizeof(buf) - pos, A11y(kA11y_FmtChestsOpened), opened_chests, total_chests);
+
+  // Keys
+  pos += snprintf(buf + pos, sizeof(buf) - pos, A11y(kA11y_FmtKeys), (int)link_num_keys);
+
+  // Big key
+  if (link_bigkey & (1 << palace_idx))
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "%s", A11y(kA11y_BigKeyYes));
+  else
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "%s", A11y(kA11y_BigKeyNo));
+
+  // Boss defeated: check the boss room for this dungeon
+  // kBossRooms maps palace indices to boss room numbers
+  // Boss defeated = bit 0x800 in save_dung_info[boss_room] (from dung_savegame_state_bits 0x8000 >> 4)
+  bool boss_defeated = false;
+  {
+    // Check current room's boss bit
+    if (dung_savegame_state_bits & 0x8000) {
+      boss_defeated = true;
+    } else {
+      // Also check the saved state for boss rooms
+      // kBossRooms: indices 0-2=light world (HC,EP,DP), 3=AT, 4-10=dark world, 11=GT
+      // Palace indices: 0=Sanc, 2=HC, 3=EP, 4=DP, 5=AT, 7=SP, 8=PD, 9=MM, 10=SW, 11=TR, 12=IP, 13=TH, 14=TT, 15=GT
+      static const uint16 kPalaceBossRooms[17] = {
+        0,     // 0: Sanctuary - no boss
+        0,     // 1: unused
+        200,   // 2: Hyrule Castle - boss room 200 (no real boss)
+        200,   // 3: Eastern Palace - boss room 200
+        51,    // 4: Desert Palace - boss room 51
+        7,     // 5: Agahnim's Tower - boss room 7
+        0,     // 6: unused
+        6,     // 7: Swamp Palace - boss room 6
+        90,    // 8: Palace of Darkness - boss room 90
+        144,   // 9: Misery Mire - boss room 144
+        41,    // 10: Skull Woods - boss room 41
+        164,   // 11: Turtle Rock - boss room 164
+        222,   // 12: Ice Palace - boss room 222
+        7,     // 13: Tower of Hera - boss room 7 (NOTE: shares with AT)
+        172,   // 14: Thieves' Town - boss room 172
+        13,    // 15: Ganon's Tower - boss room 13
+        32,    // 16: Agahnim 2 - boss room 32
+      };
+      if (palace_idx < 17) {
+        uint16 boss_room = kPalaceBossRooms[palace_idx];
+        if (boss_room > 0 && (save_dung_info[boss_room] & 0x800))
+          boss_defeated = true;
+      }
+    }
+  }
+
+  if (boss_defeated)
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "%s", A11y(kA11y_BossDefeated));
+  else
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "%s", A11y(kA11y_BossNotDefeated));
+
+  SpeechSynthesis_Speak(buf);
+#endif
+}
+
+// --- F5: Screen Description / Panoramic Scan ---
+
+#if defined(__APPLE__) || defined(_WIN32)
+static const char *GetCardinalDirName(int dx, int dy) {
+  int ax = dx < 0 ? -dx : dx;
+  int ay = dy < 0 ? -dy : dy;
+  if (ax > ay)
+    return (dx > 0) ? A11y(kA11y_right) : A11y(kA11y_left);
+  else
+    return (dy > 0) ? A11y(kA11y_south) : A11y(kA11y_north);
+}
+#endif
+
+void SpatialAudio_SpeakScreenDescription(void) {
+  if (!g_enabled) return;
+#if defined(__APPLE__) || defined(_WIN32)
+  uint8 mod = main_module_index;
+  if (mod != 7 && mod != 9 && mod != 14) {
+    SpeechSynthesis_Speak(A11y(kA11y_InMenu));
+    return;
+  }
+
+  char buf[512];
+  int pos = 0;
+  bool indoors = player_is_indoors;
+  uint16 lx = link_x_coord;
+  uint16 ly = link_y_coord;
+
+  // Area name
+  const char *area = NULL;
+  if (indoors) {
+    uint8 idx = BYTE(cur_palace_index_x2) / 2;
+    area = A11yDungeonName(idx);
+  } else {
+    area = A11yAreaName(overworld_area_index);
+  }
+  if (area)
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "%s. ", area);
+
+  // Facing direction
+  const char *facing = GetDirectionName(link_direction_facing, false);
+  if (facing)
+    pos += snprintf(buf + pos, sizeof(buf) - pos, A11y(kA11y_FmtFacing), facing);
+
+  // Extended beam scan: 4 cardinal directions, up to 256px
+  // Report passages (no wall within 256px) and wall distances
+  {
+    int ext_range = 256;
+    int beam_dist[4];  // N, S, E, W
+    for (int i = 0; i < 4; i++) beam_dist[i] = ext_range;
+
+    int scan_steps = ext_range / 8;
+    for (int step = 1; step <= scan_steps; step++) {
+      // Check 4 cardinal directions with narrow beam (±8px perpendicular)
+      static const int kDirDx[4] = { 0, 0, 1, -1 };  // N, S, E, W
+      static const int kDirDy[4] = { -1, 1, 0, 0 };
+      for (int d = 0; d < 4; d++) {
+        if (beam_dist[d] < ext_range) continue;  // already found wall
+        int px = (int)lx + 8 + kDirDx[d] * step * 8;
+        int py = (int)ly + 12 + kDirDy[d] * step * 8;
+        if (px < 0 || py < 0) continue;
+
+        uint8 tile;
+        if (indoors) {
+          int tx = (px >> 3) & 63;
+          int ty = (py >> 3) & 63;
+          int offs = ty * 64 + tx + (link_is_on_lower_level ? 0x1000 : 0);
+          tile = dung_bg2_attr_table[offs];
+        } else {
+          tile = Overworld_GetTileAttributeAtLocation((uint16)(px >> 3), (uint16)py);
+        }
+
+        int cat = ClassifyTile(tile);
+        if (!indoors && tile == 0x0B) cat = kSpatialCue_DeepWater;
+        if (cat == TILE_CLASS_WALL || cat == kSpatialCue_DeepWater || cat == kSpatialCue_Ledge)
+          beam_dist[d] = step * 8;
+      }
+    }
+
+    static const int kBeamDirA11y[4] = { kA11y_north, kA11y_south, kA11y_right, kA11y_left };
+    for (int d = 0; d < 4; d++) {
+      if (beam_dist[d] >= ext_range) {
+        pos += snprintf(buf + pos, sizeof(buf) - pos, A11y(kA11y_FmtPassageDir),
+                        A11y(kBeamDirA11y[d]));
+      } else {
+        pos += snprintf(buf + pos, sizeof(buf) - pos, A11y(kA11y_FmtWallDir),
+                        A11y(kBeamDirA11y[d]), beam_dist[d]);
+      }
+    }
+  }
+
+  // Dungeon exits (indoors only)
+  if (indoors)
+    pos = AppendDungeonExits(buf, sizeof(buf), pos);
+
+  // Enumerate entrances (overworld only)
+  if (!indoors) {
+    int total = kOverworld_Entrance_Pos_SIZE / 2;
+    typedef struct { int dist; int idx; int dx; int dy; } EntrInfo;
+    EntrInfo entrances[8];
+    int num_entr = 0;
+    for (int i = 0; i < total; i++) {
+      if (kOverworld_Entrance_Area[i] != overworld_area_index) continue;
+      // Compute entrance position relative to Link
+      uint16 epos = kOverworld_Entrance_Pos[i];
+      // Decode position: epos = ((y - base_y) & mask_y) * 8 + ((x/8 - base_x) & mask_x)
+      // Approximate by scanning entrance tiles — use raw coordinate comparison
+      // For screen description, we already have entrance data in the scan loop
+      // Use a simpler approach: compute tile distance based on entrance position encoding
+      int ey_tile = epos / 8;
+      int ex_tile = epos % 8;
+      // Convert back to pixel coords (approximate)
+      int epx = (ex_tile + overworld_offset_base_x) * 8;
+      int epy = (ey_tile + overworld_offset_base_y);
+      int edx = epx - (int)lx;
+      int edy = epy - (int)ly;
+      int d2 = edx * edx + edy * edy;
+      int dist = (int)isqrt32((uint32)d2);
+      if (dist < 256 && num_entr < 8) {
+        entrances[num_entr].dist = dist;
+        entrances[num_entr].idx = i;
+        entrances[num_entr].dx = edx;
+        entrances[num_entr].dy = edy;
+        num_entr++;
+      }
+    }
+    // Sort by distance (simple insertion sort)
+    for (int i = 1; i < num_entr; i++) {
+      EntrInfo tmp = entrances[i];
+      int j = i;
+      while (j > 0 && entrances[j - 1].dist > tmp.dist) {
+        entrances[j] = entrances[j - 1];
+        j--;
+      }
+      entrances[j] = tmp;
+    }
+    // Report up to 3 nearest entrances
+    int report = num_entr < 3 ? num_entr : 3;
+    for (int i = 0; i < report; i++) {
+      uint8 eid = kOverworld_Entrance_Id[entrances[i].idx];
+      const char *ename = A11yEntranceName(eid);
+      const char *edir = GetCardinalDirName(entrances[i].dx, entrances[i].dy);
+      pos += snprintf(buf + pos, sizeof(buf) - pos, A11y(kA11y_FmtObjectDirDist),
+                      ename, edir, entrances[i].dist);
+    }
+  }
+
+  // Sprite enumeration: all 16 slots
+  int enemy_count = 0;
+  for (int k = 0; k < 16; k++) {
+    if (sprite_state[k] == 0) continue;
+    int sx = (sprite_x_hi[k] << 8) | sprite_x_lo[k];
+    int sy = (sprite_y_hi[k] << 8) | sprite_y_lo[k];
+    int dx = sx - (int)lx;
+    int dy = sy - (int)ly;
+    int d2 = dx * dx + dy * dy;
+    int dist = (int)isqrt32((uint32)d2);
+    if (dist > 256) continue;
+
+    int cat = ClassifySprite(k);
+    const char *dir = GetCardinalDirName(dx, dy);
+    if (cat == kSpatialCue_Item) {
+      pos += snprintf(buf + pos, sizeof(buf) - pos, A11y(kA11y_FmtItemDirDist), dir, dist);
+    } else if (cat == kSpatialCue_NPC) {
+      int npc_id = GetNPCNameStringId(sprite_type[k]);
+      const char *npc_name = (npc_id >= 0) ? A11y(npc_id) : "NPC";
+      pos += snprintf(buf + pos, sizeof(buf) - pos, A11y(kA11y_FmtObjectDirDist),
+                      npc_name, dir, dist);
+    } else if (cat == kSpatialCue_Enemy) {
+      enemy_count++;
+    }
+  }
+  if (enemy_count > 0)
+    pos += snprintf(buf + pos, sizeof(buf) - pos, A11y(kA11y_FmtEnemiesNearby), enemy_count);
+
+  if (pos == 0)
+    snprintf(buf, sizeof(buf), "%s", A11y(kA11y_FmtNothingNearby));
+
+  SpeechSynthesis_Speak(buf);
+#endif
+}
+
+// --- Enhanced SpeakLocation with dungeon exits (F1) ---
+
+// Override SpeakLocation to include dungeon exits when indoors
+
 // --- Settings Persistence ---
 
 static const char * const kCueGroupKeys[kCueGroup_Count] = {
   "walls_volume", "holes_volume", "enemy_volume", "npc_volume",
   "chest_volume", "liftable_volume", "door_volume", "stairs_volume",
   "ledge_volume", "deepwater_volume", "hazard_volume", "conveyor_volume",
-  "terrain_volume", "combat_volume",
+  "item_volume", "terrain_volume", "combat_volume",
 };
 
 void SpatialAudio_SaveSettings(void) {

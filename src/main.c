@@ -340,8 +340,16 @@ int main(int argc, char** argv) {
   SpatialAudio_Init(g_config.audio_freq ? g_config.audio_freq : kDefaultFreq);
 
   // Load persisted accessibility state from zelda3_a11y.ini
+  // Check app support dir first, then current dir as fallback
   {
-    FILE *af = fopen("zelda3_a11y.ini", "r");
+    char a11y_path[PATH_MAX];
+    FILE *af = NULL;
+    if (g_save_dir[0]) {
+      snprintf(a11y_path, sizeof(a11y_path), "%s/zelda3_a11y.ini", g_save_dir);
+      af = fopen(a11y_path, "r");
+    }
+    if (!af)
+      af = fopen("zelda3_a11y.ini", "r");
     if (af) {
       char aline[256];
       while (fgets(aline, sizeof(aline), af)) {
@@ -546,11 +554,18 @@ int main(int argc, char** argv) {
       continue;
     }
 
-    // Re-enter setup screen (Alt+Ctrl+S)
+    // Re-enter setup screen (Shift+F12)
     if (SetupScreen_ShouldReenter()) {
+      // Pause game audio while setup screen is open
+      if (device)
+        SDL_PauseAudioDevice(device, 1);
+
+      // Sync current in-game accessibility state so setup screen reflects it
+      SetupScreen_SetAccessibility(SpatialAudio_IsEnabled());
       SDL_Window *setup_win = SDL_CreateWindow("Zelda 3 Setup",
           SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
           512, 448, SDL_WINDOW_RESIZABLE);
+      bool setup_ok = false;
       if (setup_win) {
         SDL_Renderer *setup_ren = SDL_CreateRenderer(setup_win, -1,
             SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
@@ -558,10 +573,32 @@ int main(int argc, char** argv) {
           setup_ren = SDL_CreateRenderer(setup_win, -1, SDL_RENDERER_SOFTWARE);
         if (setup_ren) {
           SDL_RenderSetLogicalSize(setup_ren, 256, 224);
-          SetupScreen_Run(setup_win, setup_ren, g_save_dir);
+          setup_ok = SetupScreen_Run(setup_win, setup_ren, g_save_dir);
           SDL_DestroyRenderer(setup_ren);
         }
         SDL_DestroyWindow(setup_win);
+      }
+
+      // Resume game audio
+      if (device && !g_paused)
+        SDL_PauseAudioDevice(device, 0);
+      audiopaused = g_paused;
+
+      if (setup_ok) {
+        // Re-parse config to pick up Language/Controls written by setup screen
+        ResetKeymap();
+        ParseConfigFile(NULL);
+
+        // Reload assets (may have been re-extracted with new language)
+        LoadAssets();
+
+        // Switch game language
+        ZeldaSetLanguage(g_config.language);
+
+        // Re-init language-dependent systems
+        A11yStrings_Init(g_config.language);
+        if (g_config.language && g_config.language[0])
+          Accessibility_SetLanguage(g_config.language);
       }
       continue;
     }
@@ -807,6 +844,15 @@ static void HandleCommand_Locked(uint32 j, bool pressed) {
       break;
     case kKeys_AccessibilityOptions:
       SpatialAudio_ToggleOptions();
+      break;
+    case kKeys_SpeakPosition:
+      SpatialAudio_SpeakPosition();
+      break;
+    case kKeys_SpeakProgress:
+      SpatialAudio_SpeakProgress();
+      break;
+    case kKeys_SpeakScreen:
+      SpatialAudio_SpeakScreenDescription();
       break;
     case kKeys_SetupScreen:
       if (pressed) SetupScreen_RequestReenter();

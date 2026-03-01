@@ -2124,12 +2124,600 @@ bool AssetExtract_BuildFromROM(const uint8 *rom, size_t rom_size,
   return ok;
 }
 
+// ================================================================
+//  Multi-language support: data tables and helpers
+// ================================================================
+
+// FR/DE shared alphabet base: first 96 entries identical, then extended chars
+static const char *kTextAlphabet_FR[] = {
+  "A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P",
+  "Q","R","S","T","U","V","W","X","Y","Z","a","b","c","d","e","f",
+  "g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v",
+  "w","x","y","z","0","1","2","3","4","5","6","7","8","9","!","?",
+  "-",".",",","[...]",">","(",")",
+  "[Ankh]","[Waves]","[Snake]","[LinkL]","[LinkR]",
+  "\"","[UpL]","[UpR]","[LeftL]",
+  "[LeftR]","'","[1HeartL]","[1HeartR]","[2HeartL]","[3HeartL]","[3HeartR]",
+  "[4HeartL]","[4HeartR]"," ","ö","[A]","[B]","[X]","[Y]","ü",
+  "ô",":",
+  "[DownL]","[DownR]","[RightL]","[RightR]",
+  "è","é","ê","à","ù","ç",
+  "â","û","î","ä",
+};
+#define FR_ALPHABET_SIZE 112
+
+static const char *kTextAlphabet_DE[] = {
+  "A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P",
+  "Q","R","S","T","U","V","W","X","Y","Z","a","b","c","d","e","f",
+  "g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v",
+  "w","x","y","z","0","1","2","3","4","5","6","7","8","9","!","?",
+  "-",".",",","[...]",">","(",")",
+  "[Ankh]","[Waves]","[Snake]","[LinkL]","[LinkR]",
+  "\"","[UpL]","[UpR]","[LeftL]",
+  "[LeftR]","'","[1HeartL]","[1HeartR]","[2HeartL]","[3HeartL]","[3HeartR]",
+  "[4HeartL]","[4HeartR]"," ","ö","[A]","[B]","[X]","[Y]","ü",
+  "ß",":",
+  "[DownL]","[DownR]","[RightL]","[RightR]",
+  "è","é","ê","à","ù","ç",
+  "Ä","Ö","Ü","ä",
+};
+#define DE_ALPHABET_SIZE 112
+
+static const char *kTextDictionary_FR[] = {
+  "                                          "," de "," la "," le "," ! ",
+  " d"," p"," t"," !",", c'est moi, Sahasrahla",
+  ", ","ais ","as ","an","ai",
+  "a ","che","ce","ch","dans ",
+  "des ","de ","de","est ","ent",
+  "en ","er ","es ","en","es",
+  "et","eu","e,","e ","ique",
+  "ien","is ","ie","in","ir",
+  "is","i ","les ","la ","le ",
+  "le","ll","maintenant","magique","ment",
+  "mon","mai","me","ne ","onne",
+  "oir","our","ouv","oi","on",
+  "ou","or","pouvoir","pour","peux",
+  "pas","que ","qu","rubis","re ",
+  "ra","re","r ","sorcier","s l",
+  "s d","se","so","s ","tro",
+  "te ","tu ","te","t ","un",
+  "ur","u ","ver","Ah ! Ah ! Ah !","C'est",
+  "Ganon","Maintenant","Merci","Monde","Perle de Lune",
+  "Tu as trouvé ","Ténèbres","Tu peux","Tu ",
+};
+#define FR_DICT_ENTRIES 99
+
+static const char *kTextDictionary_DE[] = {
+  "    ","   ","                                          ","-Knopf"," ich ",
+  " Sch"," Ver"," zu "," es ","aber",
+  "alle","auch","ang","aus","auf",
+  "an","bist","bin","bei","der ",
+  "die ","das ","den ","dem ","daß",
+  "der","die","das","den","da",
+  "etwas","ein ","ein","en ","er ",
+  "es ","en","er","es","ei",
+  "für","fe","habe","hier","hast",
+  "her","ich ","icht","ich","ist",
+  "ie ","im","ie","kannst ","kannst",
+  "kommen","kann ","ll","mich","mein",
+  "mit","mal","mir","nicht ","nicht",
+  "nen","nn","och ","och","or",
+  "schon","sich","sein","sch","sie",
+  "st","tte","te ","te","und ",
+  "und","ung","um","von","ver",
+  "vor","wird","zu ","Amulett","Aber",
+  "Deine","Dich ","Dir ","Dir","Der",
+  "Die","Das","Du ","Du","Da",
+  "Ein","Hyrule","Hier","Ich ","Master-Schwert",
+  "Mach","Rubine","Sch","Sie","Ver",
+  "Weisen","Zelda",
+};
+#define DE_DICT_ENTRIES 112
+
+static const uint8 kText_CommandLengths_EU[24] = {
+  1,1,1,1,1,1,1,2,2,2,2,1,1,1,1,1,1,1,1,1,2,2,2,2
+};
+
+// Language descriptor for multi-language extraction
+typedef struct {
+  const char *code;
+  uint32 rom_addrs[2];
+  uint8 command_start;
+  uint8 switch_bank;
+  uint8 finish_byte;
+  const uint8 *command_lengths;
+  int num_commands;
+  uint8 dict_base_dec;       // Dictionary base for ROM decoding
+  bool uses_new_format;      // EU-style runtime decoding
+  uint32 font_addr;          // ROM address for 4096 bytes of font data
+  uint32 font_width_addr;    // ROM address for width table
+  int font_width_count;
+  const char **alphabet;
+  int alphabet_size;
+  const char **dictionary;
+  int dict_size;
+} LangInfo;
+
+static const LangInfo kLangInfoTable[] = {
+  {"fr", {0x9c8000,0x8CE800}, 0x70,0x88,0x8F, kText_CommandLengths_EU,24,
+   0x90, true, 0xCC6E8,0x8CDEAF,112,
+   kTextAlphabet_FR,FR_ALPHABET_SIZE, kTextDictionary_FR,FR_DICT_ENTRIES},
+  {"fr-c", {0x9c8000,0x8CF150}, 0x70,0x88,0x8F, kText_CommandLengths_EU,24,
+   0x90, true, 0xCD078,0x8CE83F,112,
+   kTextAlphabet_FR,FR_ALPHABET_SIZE, kTextDictionary_FR,FR_DICT_ENTRIES},
+  {"de", {0x9c8000,0x8CEB00}, 0x70,0x88,0x8F, kText_CommandLengths_EU,24,
+   0x90, true, 0xCC6E8,0x8CDECF,112,
+   kTextAlphabet_DE,DE_ALPHABET_SIZE, kTextDictionary_DE,DE_DICT_ENTRIES},
+  {"en", {0x9c8000,0x8edf60}, 0x67,0x80,0xFF, kText_CommandLengths_US,25,
+   0x88, false, 0x8E8000,0x8ECAFF,102,
+   kTextAlphabet_DE,DE_ALPHABET_SIZE, kTextDictionary_US,NUM_DICT_ENTRIES},
+  {"es", {0x9c8000,0x8edf40}, 0x67,0x80,0xFF, kText_CommandLengths_US,25,
+   0x88, false, 0x8e8000,0x8ECADF,99,
+   kTextAlphabet_US,95, kTextDictionary_US,NUM_DICT_ENTRIES},
+  {"pl", {0x9c8000,0x8edf40}, 0x67,0x80,0xFF, kText_CommandLengths_US,25,
+   0x88, false, 0x8e8000,0x8ECADF,99,
+   kTextAlphabet_US,95, kTextDictionary_US,NUM_DICT_ENTRIES},
+  {"nl", {0x9c8000,0x8edf40}, 0x67,0x80,0xFF, kText_CommandLengths_US,25,
+   0x88, false, 0x8e8000,0x8ECADF,99,
+   kTextAlphabet_US,95, kTextDictionary_US,NUM_DICT_ENTRIES},
+  {"sv", {0x9c8000,0x8edf40}, 0x67,0x80,0xFF, kText_CommandLengths_US,25,
+   0x88, false, 0x8e8000,0x8ECADF,99,
+   kTextAlphabet_US,95, kTextDictionary_US,NUM_DICT_ENTRIES},
+  {"redux", {0x9c8000,0x8edf40}, 0x67,0x80,0xFF, kText_CommandLengths_US,25,
+   0x88, false, 0x8e8000,0x8ECADF,99,
+   kTextAlphabet_US,95, kTextDictionary_US,NUM_DICT_ENTRIES},
+  {NULL}
+};
+
+static const LangInfo *find_lang_info(const char *code) {
+  for (int i = 0; kLangInfoTable[i].code; i++)
+    if (strcmp(kLangInfoTable[i].code, code) == 0)
+      return &kLangInfoTable[i];
+  return NULL;
+}
+
+// ================================================================
+//  Read existing asset file into AssetList
+// ================================================================
+
+static bool read_asset_file(AssetList *a, const char *path) {
+  assets_init(a);
+  FILE *f = fopen(path, "rb");
+  if (!f) {
+    snprintf(g_error, sizeof(g_error), "Cannot read asset file: %s", path);
+    return false;
+  }
+  fseek(f, 0, SEEK_END);
+  long file_size = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  uint8 *data = (uint8 *)malloc(file_size);
+  if (fread(data, 1, file_size, f) != (size_t)file_size) {
+    free(data);
+    fclose(f);
+    snprintf(g_error, sizeof(g_error), "Failed to read asset file");
+    return false;
+  }
+  fclose(f);
+
+  if (file_size < 88) {
+    free(data);
+    snprintf(g_error, sizeof(g_error), "Asset file too small");
+    return false;
+  }
+
+  uint32 count = *(uint32 *)(data + 80);
+  uint32 key_size = *(uint32 *)(data + 84);
+
+  if (count > MAX_ASSETS || (size_t)file_size < 88 + count * 4 + key_size) {
+    free(data);
+    snprintf(g_error, sizeof(g_error), "Asset file corrupt");
+    return false;
+  }
+
+  const char *names = (const char *)(data + 88 + count * 4);
+  uint32 offset = 88 + count * 4 + key_size;
+
+  for (uint32 i = 0; i < count; i++) {
+    offset = (offset + 3) & ~3;
+    uint32 size = *(uint32 *)(data + 88 + i * 4);
+    if ((uint64)offset + size > (uint64)file_size) {
+      assets_free(a);
+      free(data);
+      snprintf(g_error, sizeof(g_error), "Asset file corrupt at asset %u", i);
+      return false;
+    }
+    assets_add(a, names, data + offset, size);
+    names += strlen(names) + 1;
+    offset += size;
+  }
+
+  free(data);
+  return true;
+}
+
+// ================================================================
+//  UTF-8 aware dictionary encoding
+// ================================================================
+
+static int utf8_char_len(const char *s) {
+  uint8 c = (uint8)s[0];
+  if (c < 0x80) return 1;
+  if ((c & 0xE0) == 0xC0) return 2;
+  if ((c & 0xF0) == 0xE0) return 3;
+  if ((c & 0xF8) == 0xF0) return 4;
+  return 1;
+}
+
+static void encode_dictionary_generic(
+    const char **alphabet, int alpha_size,
+    const char **dictionary, int dict_size,
+    DynBuf *out) {
+  // Encode each dictionary entry as a sequence of alphabet indices,
+  // then pack_arrays all entries together.
+  const uint8 **ptrs = (const uint8 **)malloc(dict_size * sizeof(uint8 *));
+  size_t *sizes = (size_t *)malloc(dict_size * sizeof(size_t));
+  DynBuf *entries = (DynBuf *)malloc(dict_size * sizeof(DynBuf));
+
+  for (int d = 0; d < dict_size; d++) {
+    db_init(&entries[d]);
+    const char *word = dictionary[d];
+    while (*word) {
+      int clen = utf8_char_len(word);
+      int found = -1;
+      for (int ai = 0; ai < alpha_size; ai++) {
+        int alen = (int)strlen(alphabet[ai]);
+        if (alen == clen && memcmp(word, alphabet[ai], clen) == 0) {
+          found = ai;
+          break;
+        }
+      }
+      if (found >= 0)
+        db_append_byte(&entries[d], (uint8)found);
+      word += clen;
+    }
+    ptrs[d] = entries[d].data;
+    sizes[d] = entries[d].size;
+  }
+
+  pack_arrays(out, ptrs, sizes, dict_size);
+
+  for (int d = 0; d < dict_size; d++)
+    db_free(&entries[d]);
+  free(ptrs);
+  free(sizes);
+  free(entries);
+}
+
+// ================================================================
+//  EU command transcoding (ROM format → asset format)
+// ================================================================
+
+// Transcode a single EU ROM command to asset encoding.
+// EU ROM: commands at 0x70-0x87, dict at 0x90+
+// Asset:  simple cmds 0x80-0x86, multi-byte 0x87+param, dict 0x88+
+static void transcode_eu_command(int cmd_idx, uint8 param, DynBuf *out) {
+  switch (cmd_idx) {
+    case 0:  db_append_byte(out, 0x87); db_append_byte(out, 0x83); break; // Selchg
+    case 1:  db_append_byte(out, 0x87); db_append_byte(out, 0x82); break; // Choose3
+    case 2:  db_append_byte(out, 0x87); db_append_byte(out, 0x81); break; // Choose2
+    case 3:  db_append_byte(out, 0x80); break; // Scroll
+    case 4:  db_append_byte(out, 0x82); break; // 1
+    case 5:  db_append_byte(out, 0x83); break; // 2
+    case 6:  db_append_byte(out, 0x84); break; // 3
+    case 7:  db_append_byte(out, 0x87); db_append_byte(out, param + 0x10); break; // Color
+    case 8:  db_append_byte(out, 0x87); db_append_byte(out, param); break; // Wait
+    case 9:  // Sound
+      if (param == 45) { db_append_byte(out, 0x87); db_append_byte(out, 0x40); }
+      break;
+    case 10: db_append_byte(out, 0x87); db_append_byte(out, param + 0x30); break; // Speed
+    case 11: break; // Mark (skip)
+    case 12: break; // Mark2 (skip)
+    case 13: break; // Clear (skip)
+    case 14: db_append_byte(out, 0x81); break; // Waitkey
+    case 15: break; // EndMessage (handled separately)
+    case 16: db_append_byte(out, 0x87); db_append_byte(out, 0x85); break; // NextPic
+    case 17: db_append_byte(out, 0x87); db_append_byte(out, 0x80); break; // Choose
+    case 18: db_append_byte(out, 0x87); db_append_byte(out, 0x84); break; // Item
+    case 19: db_append_byte(out, 0x85); break; // Name
+    case 20: // Window
+      if (param == 2) { db_append_byte(out, 0x87); db_append_byte(out, 0x86); }
+      break;
+    case 21: db_append_byte(out, 0x87); db_append_byte(out, param + 0x20); break; // Number
+    case 22: db_append_byte(out, 0x87); db_append_byte(out, 0x87 + param); break; // Position
+    case 23: break; // ScrollSpd (param=0 → skip)
+  }
+}
+
+// ================================================================
+//  Extract dialogue messages from a foreign ROM
+// ================================================================
+
+// Extract all dialogue messages from a ROM using language-specific parameters.
+// For EU format (FR/DE): transcodes commands and remaps dictionary bytes.
+// For US format (EN/ES/etc.): copies raw bytes directly.
+// Returns number of messages extracted.
+static int extract_lang_messages(const LangInfo *info, uint8 ***msgs_out,
+                                  size_t **sizes_out) {
+  size_t cap = 512;
+  uint8 **msgs = (uint8 **)malloc(cap * sizeof(uint8 *));
+  size_t *msg_sizes = (size_t *)malloc(cap * sizeof(size_t));
+  int count = 0;
+
+  uint32 p = info->rom_addrs[0];
+  int bank_idx = 1;
+  DynBuf cur;
+  db_init(&cur);
+
+  bool is_eu = (info->dict_base_dec != 0x88); // EU has dict_base 0x90
+
+  for (;;) {
+    uint8 c = rom_get_byte(p);
+
+    if (c == 0x7F) { // EndMessage (universal)
+      if (count >= (int)cap) {
+        cap *= 2;
+        msgs = (uint8 **)realloc(msgs, cap * sizeof(uint8 *));
+        msg_sizes = (size_t *)realloc(msg_sizes, cap * sizeof(size_t));
+      }
+      msgs[count] = cur.data;
+      msg_sizes[count] = cur.size;
+      count++;
+      cur.data = NULL; cur.size = cur.cap = 0;
+      db_init(&cur);
+      p++;
+      continue;
+    }
+
+    if (c == info->finish_byte) break;
+
+    if (c == info->switch_bank) {
+      p = info->rom_addrs[bank_idx++];
+      if (cur.data) free(cur.data);
+      db_init(&cur);
+      continue;
+    }
+
+    if (c >= info->command_start && c < info->switch_bank) {
+      int cmd_idx = c - info->command_start;
+      int cmd_len = (cmd_idx < info->num_commands) ?
+                    info->command_lengths[cmd_idx] : 1;
+      uint8 param = 0;
+      if (cmd_len == 2) {
+        p++;
+        param = rom_get_byte(p);
+      }
+
+      if (is_eu) {
+        transcode_eu_command(cmd_idx, param, &cur);
+      } else {
+        // US format: keep raw bytes
+        db_append_byte(&cur, c);
+        if (cmd_len == 2)
+          db_append_byte(&cur, param);
+      }
+      p++;
+      continue;
+    }
+
+    // Character or dictionary byte
+    if (is_eu && c >= info->dict_base_dec) {
+      // EU dictionary: remap from 0x90+ to 0x88+ (kTextDictBase)
+      db_append_byte(&cur, (uint8)(0x88 + (c - info->dict_base_dec)));
+    } else {
+      db_append_byte(&cur, c);
+    }
+    p++;
+  }
+
+  db_free(&cur);
+
+  *msgs_out = msgs;
+  *sizes_out = msg_sizes;
+  return count;
+}
+
+// ================================================================
+//  AssetExtract_AddLanguage implementation
+// ================================================================
+
 bool AssetExtract_AddLanguage(const uint8 *us_rom, size_t us_rom_size,
                               const uint8 *lang_rom, size_t lang_rom_size,
                               const char *output_path) {
   g_error[0] = 0;
-  snprintf(g_error, sizeof(g_error),
-           "Language ROM support is not yet implemented in native extraction. "
-           "Only US ROM extraction is available.");
-  return false;
+  (void)us_rom; (void)us_rom_size; // Not needed; we read existing assets
+
+  // 1. Identify the language ROM
+  const char *lang_code = AssetExtract_IdentifyROM(lang_rom, lang_rom_size);
+  if (!lang_code) {
+    snprintf(g_error, sizeof(g_error), "Unrecognized language ROM.");
+    return false;
+  }
+  if (strcmp(lang_code, "us") == 0) {
+    snprintf(g_error, sizeof(g_error),
+             "This is a US ROM. Use AssetExtract_BuildFromROM instead.");
+    return false;
+  }
+
+  // 2. Find language info
+  const LangInfo *info = find_lang_info(lang_code);
+  if (!info) {
+    snprintf(g_error, sizeof(g_error),
+             "Language '%s' is not yet supported for native extraction.", lang_code);
+    return false;
+  }
+
+  printf("Adding language '%s' to assets...\n", lang_code);
+
+  // 3. Read existing asset file
+  AssetList assets;
+  if (!read_asset_file(&assets, output_path)) return false;
+
+  if (assets.count < 97) {
+    snprintf(g_error, sizeof(g_error), "Asset file has too few assets (%d)", assets.count);
+    assets_free(&assets);
+    return false;
+  }
+
+  // 4. Set up ROM access for the foreign ROM
+  size_t stripped = lang_rom_size;
+  g_rom = StripSMCHeader(lang_rom, &stripped);
+  g_rom_size = stripped;
+
+  // 5. Extract dialogue from the foreign ROM
+  uint8 **msgs = NULL;
+  size_t *msg_sizes = NULL;
+  int msg_count = extract_lang_messages(info, &msgs, &msg_sizes);
+
+  if (msg_count == 0) {
+    snprintf(g_error, sizeof(g_error), "No dialogue found in language ROM.");
+    assets_free(&assets);
+    return false;
+  }
+  printf("  Extracted %d dialogue messages\n", msg_count);
+
+  // 5b. EU ROMs have 396 messages (missing file-select text at index 4).
+  //     Insert synthetic message to match the US ROM's 397-message layout.
+  //     Python reference: text_compression.py print_strings() does the same.
+  //     Text: "[Speed 00]0- [Number 00]. 1- [Number 01][2]2- [Number 02]. 3- [Number 03]"
+  if (msg_count == 396) {
+    // EU asset encoding: space=0x59, '0'=0x34, '-'=0x40, '.'=0x41
+    static const uint8 kFileSelectMsg[] = {
+      0x87, 0x30,             // [Speed 00]
+      0x34, 0x40, 0x59,       // "0- "
+      0x87, 0x20,             // [Number 00]
+      0x41, 0x59,             // ". "
+      0x35, 0x40, 0x59,       // "1- "
+      0x87, 0x21,             // [Number 01]
+      0x83,                   // [2]
+      0x36, 0x40, 0x59,       // "2- "
+      0x87, 0x22,             // [Number 02]
+      0x41, 0x59,             // ". "
+      0x37, 0x40, 0x59,       // "3- "
+      0x87, 0x23,             // [Number 03]
+    };
+    msgs = (uint8 **)realloc(msgs, (msg_count + 1) * sizeof(uint8 *));
+    msg_sizes = (size_t *)realloc(msg_sizes, (msg_count + 1) * sizeof(size_t));
+    // Shift messages 4..395 to 5..396
+    memmove(&msgs[5], &msgs[4], (msg_count - 4) * sizeof(uint8 *));
+    memmove(&msg_sizes[5], &msg_sizes[4], (msg_count - 4) * sizeof(size_t));
+    // Insert at index 4
+    msgs[4] = (uint8 *)malloc(sizeof(kFileSelectMsg));
+    memcpy(msgs[4], kFileSelectMsg, sizeof(kFileSelectMsg));
+    msg_sizes[4] = sizeof(kFileSelectMsg);
+    msg_count++;
+    printf("  Inserted missing file-select message at index 4 (now %d messages)\n", msg_count);
+  }
+
+  // 6. Encode dictionary for this language
+  DynBuf dict_packed;
+  db_init(&dict_packed);
+  encode_dictionary_generic(info->alphabet, info->alphabet_size,
+                            info->dictionary, info->dict_size, &dict_packed);
+
+  // 7. Pack dialogue messages
+  DynBuf dialogue_packed;
+  db_init(&dialogue_packed);
+  pack_arrays(&dialogue_packed, (const uint8 **)msgs, msg_sizes, msg_count);
+
+  // 8. Pack [dict, dialogue] into one language entry
+  const uint8 *lang_items[2] = { dict_packed.data, dialogue_packed.data };
+  size_t lang_sizes[2] = { dict_packed.size, dialogue_packed.size };
+  DynBuf lang_entry;
+  db_init(&lang_entry);
+  pack_arrays(&lang_entry, lang_items, lang_sizes, 2);
+
+  // 9. Extract font from the foreign ROM
+  uint8 font_data[4096];
+  rom_get_bytes(info->font_addr, font_data, 4096);
+  uint8 font_width[256];
+  rom_get_bytes(info->font_width_addr, font_width, info->font_width_count);
+
+  const uint8 *font_items[2] = { font_data, font_width };
+  size_t font_sizes[2] = { 4096, (size_t)info->font_width_count };
+  DynBuf font_entry;
+  db_init(&font_entry);
+  pack_arrays(&font_entry, font_items, font_sizes, 2);
+
+  // 10. Build kDialogueMap entry for this language
+  uint8 lang_str[8];
+  size_t lang_str_len = strlen(lang_code);
+  memcpy(lang_str, lang_code, lang_str_len);
+
+  // Count existing languages to determine index
+  MemBlk existing_96 = { assets.data[96], assets.sizes[96] };
+  int num_existing = 0;
+  for (int i = 0; ; i++) {
+    MemBlk mb = FindIndexInMemblk(existing_96, i);
+    if (mb.ptr == NULL) break;
+    num_existing++;
+  }
+
+  uint8 map_flags[3];
+  map_flags[0] = (uint8)num_existing;  // language index
+  map_flags[1] = (uint8)num_existing;  // font index (same)
+  map_flags[2] = info->uses_new_format ? 3 : 2;  // bit0=new_format, bit1=not_us
+
+  const uint8 *map_items[2] = { lang_str, map_flags };
+  size_t map_sizes[2] = { lang_str_len, 3 };
+  DynBuf map_entry;
+  db_init(&map_entry);
+  pack_arrays(&map_entry, map_items, map_sizes, 2);
+
+  // 11. Unpack existing assets 94/95/96, append new entries, repack
+
+  // Helper: unpack a packed asset, add a new entry, repack
+  #define REPACK_ASSET(asset_idx, new_data, new_size) do { \
+    MemBlk existing = { assets.data[asset_idx], assets.sizes[asset_idx] }; \
+    int n = 0; \
+    for (int _i = 0; ; _i++) { \
+      MemBlk _mb = FindIndexInMemblk(existing, _i); \
+      if (_mb.ptr == NULL) break; \
+      n++; \
+    } \
+    const uint8 **_items = (const uint8 **)malloc((n + 1) * sizeof(uint8 *)); \
+    size_t *_sizes = (size_t *)malloc((n + 1) * sizeof(size_t)); \
+    for (int _i = 0; _i < n; _i++) { \
+      MemBlk _mb = FindIndexInMemblk(existing, _i); \
+      _items[_i] = _mb.ptr; \
+      _sizes[_i] = _mb.size; \
+    } \
+    _items[n] = (new_data); \
+    _sizes[n] = (new_size); \
+    DynBuf _repacked; \
+    db_init(&_repacked); \
+    pack_arrays(&_repacked, _items, _sizes, n + 1); \
+    free(assets.data[asset_idx]); \
+    assets.data[asset_idx] = _repacked.data; \
+    assets.sizes[asset_idx] = _repacked.size; \
+    _repacked.data = NULL; \
+    free(_items); \
+    free(_sizes); \
+  } while (0)
+
+  REPACK_ASSET(94, lang_entry.data, lang_entry.size);
+  REPACK_ASSET(95, font_entry.data, font_entry.size);
+  REPACK_ASSET(96, map_entry.data, map_entry.size);
+
+  #undef REPACK_ASSET
+
+  // 12. Write modified asset file
+  printf("  Writing %d assets to %s...\n", assets.count, output_path);
+  bool ok = write_asset_file(&assets, output_path);
+
+  // Cleanup
+  db_free(&dict_packed);
+  db_free(&dialogue_packed);
+  db_free(&lang_entry);
+  db_free(&font_entry);
+  db_free(&map_entry);
+  for (int i = 0; i < msg_count; i++)
+    free(msgs[i]);
+  free(msgs);
+  free(msg_sizes);
+  assets_free(&assets);
+
+  if (ok)
+    printf("Language '%s' added successfully.\n", lang_code);
+
+  return ok;
 }
