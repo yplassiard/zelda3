@@ -1671,7 +1671,8 @@ void SpatialAudio_ScanFrame(void) {
       int wdx = g_cue_snapshot[c].dx;
       int wdy = g_cue_snapshot[c].dy;
       int dist = (int)isqrt32((uint32)(wdx * wdx + wdy * wdy));
-      int ms = 60 + (dist * 190 / SCAN_RANGE);
+      if (dist > 60) { g_wall_interval[w] = 0; continue; } // mute distant walls
+      int ms = 60 + (dist * 190 / 60);
       g_wall_interval[w] = g_sample_rate * ms / 1000;
     } else {
       g_wall_interval[w] = 0;
@@ -1860,6 +1861,10 @@ void SpatialAudio_MixAudio(int16 *buf, int samples, int channels) {
       // Per-category envelope
       if (c >= kSpatialCue_WallN && c <= kSpatialCue_WallW) {
         int w = c - kSpatialCue_WallN;
+        // Quadratic distance falloff within 60px wall range
+        int wall_range = 60;
+        if (dist > wall_range) { volume = 0; }
+        else { int atten = (wall_range - dist) * 256 / wall_range; volume = atten * atten >> 8; }
         volume = (int)((uint32)volume * g_wall_envelope[w] >> 16);
       } else if (c == kSpatialCue_NPC) {
         // Double-chime: beep1 60ms, gap 40ms, beep2 60ms, silence until repeat

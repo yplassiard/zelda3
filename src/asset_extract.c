@@ -1784,7 +1784,7 @@ static void extract_overworld_tables(AssetList *a) {
     uint16 fh_area[19], fh_pos[19];
     uint8 fh_entrance[19];
     for (int i = 0; i < 19; i++) {
-      fh_pos[i] = rom_get_word(0x9BB800 + i * 2) + 0x400;
+      fh_pos[i] = rom_get_word(0x9BB800 + i * 2);
       fh_area[i] = rom_get_word(0x9BB826 + i * 2);
       fh_entrance[i] = rom_get_byte(0x9BB84C + i);
     }
